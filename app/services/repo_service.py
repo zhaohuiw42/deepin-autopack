@@ -19,10 +19,122 @@ class RepoService:
     """仓库管理服务"""
     
     @staticmethod
+    def _clone_project_in_context(project_id: int):
+        """
+        在 app context 中同步克隆单个项目仓库（实际克隆逻辑）。
+
+        由 clone_project_repo / clone_all_repos 复用。
+
+        Args:
+            project_id: 项目ID
+        """
+        try:
+            project = Project.query.get(project_id)
+            if not project:
+                logger.error(f"项目 {project_id} 不存在")
+                return
+
+            # 更新状态为克隆中
+            project.repo_status = 'cloning'
+            db.session.commit()
+
+            logger.info(f"开始克隆项目 {project.name} 的仓库...")
+
+            # 获取全局配置
+            config = GlobalConfig.get_config()
+            repos_dir = config.local_repos_dir if config and config.local_repos_dir else '/tmp/deepin-autopack-repos'
+
+            # 创建目录
+            os.makedirs(repos_dir, exist_ok=True)
+
+            # 确定本地路径
+            local_path = os.path.join(repos_dir, project.name)
+
+            # 如果目录已存在，先删除
+            if os.path.exists(local_path):
+                import shutil
+                shutil.rmtree(local_path)
+
+            # rmtree 可能把被构建任务 os.chdir 占用的进程当前目录删掉，
+            # 而 GitPython 的 clone_from 依赖 os.getcwd()，会抛 FileNotFoundError。
+            # 这里在克隆前校验并修正进程 CWD 到刚创建好的 repos_dir。
+            try:
+                os.getcwd()
+            except OSError:
+                logger.warning("进程当前目录已失效，切换到 repos_dir 后重试克隆")
+                os.chdir(repos_dir)
+
+            # 确定克隆URL和仓库类型
+            # 优先级：github_url > gerrit_repo_url（GitHub 优先）
+            # 根据 URL 内容判断是否为 GitHub 仓库
+            clone_url = None
+            is_github = False
+
+            if project.github_url:
+                clone_url = project.github_url
+                is_github = True
+                logger.info(f"使用 GitHub 仓库: {clone_url}")
+            elif project.gerrit_repo_url:
+                clone_url = project.gerrit_repo_url
+                # 仍然检查是否为 GitHub URL
+                if 'github.com' in clone_url.lower():
+                    is_github = True
+                    logger.info(f"使用 GitHub 仓库: {clone_url}")
+                else:
+                    logger.info(f"使用 Gerrit 仓库: {clone_url}")
+            else:
+                raise Exception("未配置仓库地址")
+
+            # 配置代理（只在克隆 GitHub 仓库时使用）
+            env = os.environ.copy()
+            if is_github and config and config.https_proxy:
+                env['https_proxy'] = config.https_proxy
+                env['http_proxy'] = config.https_proxy
+                logger.info(f"GitHub 仓库使用代理: {config.https_proxy}")
+            elif not is_github:
+                logger.info("Gerrit 仓库不使用代理")
+
+            # 确定分支
+            branch = project.github_branch if is_github else project.gerrit_branch
+
+            # 克隆仓库
+            logger.info(f"克隆到: {local_path}，分支: {branch}")
+            repo = Repo.clone_from(
+                clone_url,
+                local_path,
+                branch=branch,
+                env=env
+            )
+
+            # 更新项目信息
+            project.local_repo_path = local_path
+            project.repo_status = 'ready'
+            project.repo_error = None
+            db.session.commit()
+
+            logger.info(f"✓ 项目 {project.name} 仓库克隆成功")
+
+        except GitCommandError as e:
+            logger.error(f"Git 克隆失败: {str(e)}")
+            project = Project.query.get(project_id)
+            if project:
+                project.repo_status = 'error'
+                project.repo_error = f"Git克隆失败: {str(e)}"
+                db.session.commit()
+
+        except Exception as e:
+            logger.error(f"克隆仓库异常: {str(e)}", exc_info=True)
+            project = Project.query.get(project_id)
+            if project:
+                project.repo_status = 'error'
+                project.repo_error = str(e)
+                db.session.commit()
+
+    @staticmethod
     def clone_project_repo(project_id: int):
         """
         异步克隆项目仓库
-        
+
         Args:
             project_id: 项目ID
         """
@@ -30,103 +142,43 @@ class RepoService:
             # 需要在新线程中创建新的 app context
             from app import create_app
             app = create_app()
-            
+
             with app.app_context():
-                try:
-                    project = Project.query.get(project_id)
-                    if not project:
-                        logger.error(f"项目 {project_id} 不存在")
-                        return
-                    
-                    # 更新状态为克隆中
-                    project.repo_status = 'cloning'
-                    db.session.commit()
-                    
-                    logger.info(f"开始克隆项目 {project.name} 的仓库...")
-                    
-                    # 获取全局配置
-                    config = GlobalConfig.get_config()
-                    repos_dir = config.local_repos_dir if config and config.local_repos_dir else '/tmp/deepin-autopack-repos'
-                    
-                    # 创建目录
-                    os.makedirs(repos_dir, exist_ok=True)
-                    
-                    # 确定本地路径
-                    local_path = os.path.join(repos_dir, project.name)
-                    
-                    # 如果目录已存在，先删除
-                    if os.path.exists(local_path):
-                        import shutil
-                        shutil.rmtree(local_path)
-                    
-                    # 确定克隆URL和仓库类型
-                    # 优先级：github_url > gerrit_repo_url（GitHub 优先）
-                    # 根据 URL 内容判断是否为 GitHub 仓库
-                    clone_url = None
-                    is_github = False
-                    
-                    if project.github_url:
-                        clone_url = project.github_url
-                        is_github = True
-                        logger.info(f"使用 GitHub 仓库: {clone_url}")
-                    elif project.gerrit_repo_url:
-                        clone_url = project.gerrit_repo_url
-                        # 仍然检查是否为 GitHub URL
-                        if 'github.com' in clone_url.lower():
-                            is_github = True
-                            logger.info(f"使用 GitHub 仓库: {clone_url}")
-                        else:
-                            logger.info(f"使用 Gerrit 仓库: {clone_url}")
-                    else:
-                        raise Exception("未配置仓库地址")
-                    
-                    # 配置代理（只在克隆 GitHub 仓库时使用）
-                    env = os.environ.copy()
-                    if is_github and config and config.https_proxy:
-                        env['https_proxy'] = config.https_proxy
-                        env['http_proxy'] = config.https_proxy
-                        logger.info(f"GitHub 仓库使用代理: {config.https_proxy}")
-                    elif not is_github:
-                        logger.info("Gerrit 仓库不使用代理")
-                    
-                    # 确定分支
-                    branch = project.github_branch if is_github else project.gerrit_branch
-                    
-                    # 克隆仓库
-                    logger.info(f"克隆到: {local_path}，分支: {branch}")
-                    repo = Repo.clone_from(
-                        clone_url,
-                        local_path,
-                        branch=branch,
-                        env=env
-                    )
-                    
-                    # 更新项目信息
-                    project.local_repo_path = local_path
-                    project.repo_status = 'ready'
-                    project.repo_error = None
-                    db.session.commit()
-                    
-                    logger.info(f"✓ 项目 {project.name} 仓库克隆成功")
-                    
-                except GitCommandError as e:
-                    logger.error(f"Git 克隆失败: {str(e)}")
-                    project = Project.query.get(project_id)
-                    if project:
-                        project.repo_status = 'error'
-                        project.repo_error = f"Git克隆失败: {str(e)}"
-                        db.session.commit()
-                        
-                except Exception as e:
-                    logger.error(f"克隆仓库异常: {str(e)}", exc_info=True)
-                    project = Project.query.get(project_id)
-                    if project:
-                        project.repo_status = 'error'
-                        project.repo_error = str(e)
-                        db.session.commit()
-        
+                RepoService._clone_project_in_context(project_id)
+
         # 启动后台线程
         thread = threading.Thread(target=_clone)
+        thread.daemon = True
+        thread.start()
+
+    @staticmethod
+    def clone_all_repos(project_ids: Optional[List[int]] = None):
+        """
+        异步顺序重新克隆多个项目仓库。
+
+        一次只克隆一个仓库，避免并发克隆造成资源争用或网络阻塞。
+        调用方通常会先把所有项目状态置为 cloning，后台线程再逐个执行。
+
+        Args:
+            project_ids: 要克隆的项目ID列表，为 None 时克隆所有项目
+        """
+        def _clone_all():
+            from app import create_app
+            app = create_app()
+
+            with app.app_context():
+                ids = project_ids
+                if ids is None:
+                    projects = Project.query.all()
+                    ids = [p.id for p in projects]
+
+                logger.info(f"开始批量克隆 {len(ids)} 个项目仓库...")
+                for pid in ids:
+                    RepoService._clone_project_in_context(pid)
+                logger.info("批量克隆任务执行完毕")
+
+        # 启动后台线程
+        thread = threading.Thread(target=_clone_all)
         thread.daemon = True
         thread.start()
     

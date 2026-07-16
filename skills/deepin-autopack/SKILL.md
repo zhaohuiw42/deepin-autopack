@@ -135,6 +135,9 @@ curl -s -X POST http://localhost:5000/api/v1/packages/create \
 - `version` - 版本号（**不指定则自动从 debian/changelog 读取当前版本并 patch+1**，无法自动生成时会报错提示用户手动指定）
 - `architectures` - 架构列表（默认 `["amd64", "arm64", "loong64", "sw64", "mips64el"]`）
 - `mode` - `normal`(默认) / `changelog_only` / `crp_only` / `github_action`
+  - `normal`: 提交 changelog 并 CRP 打包（会修改源码 changelog）
+  - `changelog_only`: 仅提交 changelog，不 CRP 打包
+  - `crp_only`: 不更改 changelog，直接 CRP 打包。**可指定 `version` 以升版本打包**（CRP 以该版本号作为构建 Tag）；不指定则自动 patch+1
 - `crp_topic_id` + `crp_topic_name` - 指定 CRP 主题（**不指定则自动选择最新的 CRP 主题**）
 
 返回:

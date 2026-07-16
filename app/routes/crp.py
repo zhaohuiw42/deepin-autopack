@@ -42,8 +42,7 @@ def api_topic_detail(topic_id):
         username = CRPService.fetch_user(token)
         
         # 获取主题信息
-        topic_type = config.crp_topic_type or 'test'
-        topics = CRPService.list_topics(token, username, config.crp_branch_id, topic_type)
+        topics = CRPService.list_all_topics(token, username, config.crp_branch_id)
         
         # 找到当前主题（API返回的字段名可能是大写ID或小写id）
         topic = None
@@ -114,9 +113,9 @@ def api_get_topics():
                 'message': '获取用户信息失败'
             }), 500
         
-        # 获取主题列表
-        topic_type = config.crp_topic_type or 'test'
-        topics = CRPService.list_topics(token, username, config.crp_branch_id, topic_type)
+        # 支持通过参数指定分支ID，否则使用全局配置
+        branch_id = request.args.get('branch_id', type=int) or config.crp_branch_id
+        topics = CRPService.list_all_topics(token, username, branch_id)
         
         return jsonify({
             'success': True,
@@ -129,6 +128,167 @@ def api_get_topics():
             'success': False,
             'message': f'获取主题列表失败: {str(e)}'
         }), 500
+
+
+
+@crp_bp.route('/api/topics/create', methods=['POST'])
+def api_create_topic():
+    """创建CRP主题"""
+    try:
+        data = request.get_json()
+        name = data.get('name', '').strip()
+        if not name:
+            return jsonify({'success': False, 'message': '主题名称不能为空'}), 400
+
+        description = data.get('description', '').strip()
+        tpc_type = data.get('tpc_type', 'public').strip()
+
+        config = GlobalConfig.get_config()
+        branch_id = data.get('branch_id') or config.crp_branch_id
+        if not branch_id:
+            return jsonify({'success': False, 'message': 'CRP分支ID未配置'}), 400
+
+        token = CRPService.get_token()
+        if not token:
+            return jsonify({'success': False, 'message': 'CRP登录失败'}), 401
+
+        # 获取当前用户作为主题Owner
+        owner = CRPService.fetch_user(token) or ""
+
+        # 成员：请求体可选指定 members，再合并全局配置的默认成员（去重）
+        members = []
+        body_members = data.get('members') or []
+        if isinstance(body_members, str):
+            body_members = [m for m in body_members.replace(',', ';').split(';') if m.strip()]
+        members.extend(CRPService.parse_members(body_members))
+        members.extend(CRPService.get_default_members())
+        # 去重保序
+        members = CRPService.parse_members(members)
+
+        result = CRPService.create_topic(
+            token=token,
+            name=name,
+            branch_id=branch_id,
+            tpc_type=tpc_type,
+            owner=owner,
+            description=description or name,
+            members=members
+        )
+
+        if result:
+            topic_id = result.get('ID') or result.get('id')
+            member_msg = ''
+            if members:
+                # CRP 创建接口对 Members 字段不可靠（会被忽略），创建后用 PUT 显式补加。
+                # 用纯账号 owner 双保险，避免依赖 CRP 返回的对象格式解析。
+                upd = CRPService.update_topic_members(
+                    token, int(topic_id), owners=[owner] if owner else None, members=members
+                )
+                if upd:
+                    member_msg = f'，已自动添加成员：{"、".join(members)}'
+                else:
+                    member_msg = '，成员自动添加失败，请到主题详情页手动添加'
+            return jsonify({
+                'success': True,
+                'data': {
+                    'id': topic_id,
+                    'name': result.get('Name') or result.get('name', name)
+                },
+                'message': f'主题 [{name}] 创建成功{member_msg}'
+            })
+        else:
+            return jsonify({'success': False, 'message': '创建主题失败，请查看日志'}), 500
+
+    except Exception as e:
+        logger.error(f"创建主题失败: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'message': f'创建主题失败: {str(e)}'}), 500
+
+
+@crp_bp.route('/api/topics/<int:topic_id>/members', methods=['GET'])
+def api_topic_members(topic_id):
+    """获取主题成员（owner/member）"""
+    try:
+        token = CRPService.get_token()
+        if not token:
+            return jsonify({'success': False, 'message': 'CRP登录失败，请检查LDAP账号密码'}), 401
+
+        detail = CRPService.get_topic_detail(token, topic_id)
+        if not detail:
+            return jsonify({'success': False, 'message': '获取主题详情失败，可能无权限或主题不存在'}), 404
+
+        return jsonify({
+            'success': True,
+            'data': {
+                'owners': detail.get('owners', []),
+                'members': detail.get('members', []),
+                'name': detail.get('name', '')
+            }
+        })
+    except Exception as e:
+        logger.error(f"获取主题成员失败: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'message': f'获取主题成员失败: {str(e)}'}), 500
+
+
+@crp_bp.route('/api/topics/<int:topic_id>/members', methods=['POST'])
+def api_update_topic_members(topic_id):
+    """更新主题成员（添加/移除 owner 或 member）
+
+    请求体：
+        add_members: [account, ...]      要添加的成员
+        remove_members: [account, ...]   要移除的成员
+        add_owners: [account, ...]       要添加的 owner
+        remove_owners: [account, ...]    要移除的 owner
+        set_members: [account, ...]      整体覆盖成员（可选）
+        set_owners: [account, ...]      整体覆盖 owner（可选）
+    """
+    try:
+        token = CRPService.get_token()
+        if not token:
+            return jsonify({'success': False, 'message': 'CRP登录失败，请检查LDAP账号密码'}), 401
+
+        data = request.get_json(silent=True) or {}
+
+        detail = CRPService.get_topic_detail(token, topic_id)
+        if not detail:
+            return jsonify({'success': False, 'message': '获取主题详情失败，可能无权限或主题不存在'}), 404
+
+        owners = list(detail.get('owners', []))
+        members = list(detail.get('members', []))
+
+        if data.get('set_owners') is not None:
+            owners = CRPService.parse_members(data.get('set_owners'))
+        if data.get('set_members') is not None:
+            members = CRPService.parse_members(data.get('set_members'))
+
+        for acc in CRPService.parse_members(data.get('add_owners')):
+            if acc not in owners:
+                owners.append(acc)
+        for acc in CRPService.parse_members(data.get('remove_owners')):
+            owners = [o for o in owners if o != acc]
+        for acc in CRPService.parse_members(data.get('add_members')):
+            if acc not in members:
+                members.append(acc)
+        for acc in CRPService.parse_members(data.get('remove_members')):
+            members = [m for m in members if m != acc]
+
+        if not owners:
+            return jsonify({'success': False, 'message': '主题至少需要保留一个 owner'}), 400
+
+        result = CRPService.update_topic_members(token, topic_id, owners=owners, members=members)
+        if result is None:
+            return jsonify({'success': False, 'message': '更新成员失败，请查看日志'}), 500
+
+        return jsonify({
+            'success': True,
+            'data': {
+                'owners': result['owners'],
+                'members': result['members']
+            },
+            'message': '成员更新成功'
+        })
+    except Exception as e:
+        logger.error(f"更新主题成员失败: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'message': f'更新主题成员失败: {str(e)}'}), 500
 
 
 @crp_bp.route('/api/topics/<int:topic_id>/releases', methods=['GET'])

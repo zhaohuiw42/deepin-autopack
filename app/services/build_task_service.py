@@ -14,7 +14,26 @@ from app.models import Project
 from app.models.build_task import BuildTask, BuildTaskStep
 from git import Repo
 
+from sqlalchemy.orm import joinedload
+
 logger = logging.getLogger(__name__)
+
+
+# 按仓库路径分组的锁：同一本地仓库的并发任务在此串行执行 git 写操作
+# （fetch/checkout/reset），避免争夺 .git/index.lock 导致一个成功一个失败。
+_repo_locks = {}
+_repo_locks_guard = threading.Lock()
+
+
+def _get_repo_lock(repo_path):
+    """获取（或创建）对应仓库路径的互斥锁"""
+    key = os.path.abspath(repo_path) if repo_path else ""
+    with _repo_locks_guard:
+        lock = _repo_locks.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _repo_locks[key] = lock
+        return lock
 
 
 # 步骤定义
@@ -97,6 +116,7 @@ class BuildTaskService:
                 architectures=package_config.get("architectures", []),
                 crp_topic_id=package_config.get("crp_topic_id"),
                 crp_topic_name=package_config.get("crp_topic_name"),
+                crp_branch_id=package_config.get("crp_branch_id"),
                 start_commit_hash=package_config.get("start_commit_hash", ""),
                 github_action_name=package_config.get("github_action_name"),
                 github_action_inputs=package_config.get("github_action_params"),
@@ -298,6 +318,7 @@ class BuildTaskService:
         if status:
             query = query.filter_by(status=status)
 
+        query = query.options(joinedload(BuildTask.project))
         query = query.order_by(BuildTask.created_at.desc())
         query = query.limit(limit).offset(offset)
 
@@ -1446,13 +1467,57 @@ class BuildExecutor:
                     elif response.status_code == 401:
                         raise Exception("GitHub Token无效或已过期")
                     elif response.status_code == 403:
-                        # 可能是API速率限制
                         rate_limit_remaining = response.headers.get(
                             "X-RateLimit-Remaining", "unknown"
                         )
-                        raise Exception(
-                            f"GitHub API访问受限 (剩余: {rate_limit_remaining})"
+                        retry_after = response.headers.get("Retry-After")
+                        try:
+                            gh_message = response.json().get("message", "")
+                        except Exception:
+                            gh_message = ""
+                        gh_msg_lower = gh_message.lower()
+
+                        # 次要/滥用速率限制：剩余主额度仍很高，属临时限制
+                        is_secondary_limit = (
+                            "secondary rate limit" in gh_msg_lower
+                            or retry_after is not None
                         )
+                        # 主速率限制耗尽
+                        is_primary_exhausted = (
+                            rate_limit_remaining == "0"
+                            or "rate limit" in gh_msg_lower
+                        )
+
+                        if is_secondary_limit:
+                            # 临时限制，等待后重试，不要中断整个任务
+                            try:
+                                wait = min(int(retry_after or 60), check_interval)
+                            except (TypeError, ValueError):
+                                wait = check_interval
+                            logger.warning(
+                                f"GitHub次要速率限制，等待{wait}秒后重试 "
+                                f"(剩余主额度: {rate_limit_remaining})"
+                            )
+                            for _ in range(wait):
+                                if self._stop_event.is_set():
+                                    return
+                                time.sleep(1)
+                            continue
+                        elif is_primary_exhausted:
+                            reset = response.headers.get(
+                                "X-RateLimit-Reset", "unknown"
+                            )
+                            raise Exception(
+                                f"GitHub API主速率限制已耗尽 "
+                                f"(剩余: {rate_limit_remaining}, 重置时间: {reset})"
+                            )
+                        else:
+                            # 权限或资源访问问题（如私有仓库、SSO未授权）
+                            raise Exception(
+                                f"GitHub API访问被拒绝 (HTTP 403): "
+                                f"{gh_message or '权限不足或资源不可访问'} "
+                                f"(剩余额度: {rate_limit_remaining})"
+                            )
                     else:
                         raise Exception(
                             f"GitHub API请求失败: HTTP {response.status_code}"
@@ -1725,7 +1790,8 @@ class BuildExecutor:
             if not config:
                 raise Exception("未找到全局配置")
 
-            if not config.crp_branch_id:
+            branch_id = self.task.crp_branch_id or config.crp_branch_id
+            if not branch_id:
                 raise Exception("未配置CRP分支ID")
 
             if not self.task.crp_topic_id:
@@ -1738,44 +1804,49 @@ class BuildExecutor:
                 raise Exception("获取CRP Token失败，请检查LDAP账号密码配置")
 
             # 获取用于CRP打包的commit hash
-            repo = Repo(self.project.local_repo_path)
-            commit_hash = None
+            # 同一仓库的并发任务在此串行执行 fetch/checkout/reset，
+            # 避免争夺 .git/index.lock（同一仓库往不同分支同时打包时必现）。
+            repo_lock = _get_repo_lock(self.project.local_repo_path)
+            with repo_lock:
+                repo = Repo(self.project.local_repo_path)
+                commit_hash = None
 
-            # 更新本地仓库到最新状态并获取commit hash
-            try:
-                # Fetch最新代码
-                origin = repo.remotes.origin
-                origin.fetch()
-                logger.info(f"已fetch最新代码")
+                # 更新本地仓库到最新状态并获取commit hash
+                try:
+                    # Fetch最新代码
+                    origin = repo.remotes.origin
+                    origin.fetch()
+                    logger.info(f"已fetch最新代码")
 
-                # 根据项目类型选择分支
-                if self.project.github_url:
-                    # GitHub仓库：切换到GitHub分支
-                    target_branch = self.project.github_branch
-                    logger.info(f"GitHub仓库，切换到GitHub分支: {target_branch}")
-                else:
-                    # Gerrit仓库：切换到Gerrit分支
-                    target_branch = self.project.gerrit_branch
-                    logger.info(f"Gerrit仓库，切换到Gerrit分支: {target_branch}")
+                    # 根据项目类型选择分支
+                    if self.project.github_url:
+                        # GitHub仓库：切换到GitHub分支
+                        target_branch = self.project.github_branch
+                        logger.info(f"GitHub仓库，切换到GitHub分支: {target_branch}")
+                    else:
+                        # Gerrit仓库：切换到Gerrit分支
+                        target_branch = self.project.gerrit_branch
+                        logger.info(f"Gerrit仓库，切换到Gerrit分支: {target_branch}")
 
-                if not target_branch:
-                    raise Exception("未配置目标分支")
+                    if not target_branch:
+                        raise Exception("未配置目标分支")
 
-                # Checkout到目标分支
-                repo.git.checkout(target_branch)
+                    # Checkout到目标分支
+                    repo.git.checkout(target_branch)
 
-                # 重置到远程最新状态
-                remote_branch = f"origin/{target_branch}"
-                logger.info(f"重置到远程分支: {remote_branch}")
-                repo.git.reset("--hard", remote_branch)
+                    # 重置到远程最新状态
+                    remote_branch = f"origin/{target_branch}"
+                    logger.info(f"重置到远程分支: {remote_branch}")
+                    repo.git.reset("--hard", remote_branch)
 
-                # 获取最新的commit hash
-                commit_hash = repo.head.commit.hexsha
-                logger.info(f"从{target_branch}获取commit: {commit_hash[:8]}")
+                    # 获取最新的commit hash
+                    commit_hash = repo.head.commit.hexsha
+                    logger.info(f"从{target_branch}获取commit: {commit_hash[:8]}")
 
-            except Exception as e:
-                logger.exception(f"更新本地仓库失败: {e}")
-                raise Exception(f"更新本地仓库失败: {str(e)}")
+                except Exception as e:
+                    logger.exception(f"更新本地仓库失败: {e}")
+                    raise Exception(f"更新本地仓库失败: {str(e)}")
+
 
             # 确定分支
             branch = (
@@ -1786,18 +1857,24 @@ class BuildExecutor:
             if not branch:
                 raise Exception("未配置项目分支")
 
-            # 格式化架构列表（不做映射，直接使用原值）
+            # 架构名称映射：前端统一使用loong64/sw64，后端按分支系列转换
+            # 规则：25系列分支（snipe-2500 / snipe-2500u1 / snipe-2500u2）使用 loong64、sw64
+            #       其余（20系列）分支使用 loongarch64、sw_64
+            branch_name = CRPService.CRP_BRANCHES.get(branch_id, "")
+            is_25_series = branch_name.startswith("snipe-2500")
+            arch_name_map = {"loong64": "loong64", "sw64": "sw64"} if is_25_series else {"loong64": "loongarch64", "sw64": "sw_64"}
+
+            # 格式化架构列表
             if self.task.architectures:
-                # 去重处理，防止重复
-                unique_arches = (
-                    list(dict.fromkeys(self.task.architectures))
-                    if isinstance(self.task.architectures, list)
-                    else self.task.architectures
-                )
+                mapped = [arch_name_map.get(a, a) for a in self.task.architectures]
+                unique_arches = list(dict.fromkeys(mapped)) if isinstance(mapped, list) else mapped
                 arches = ";".join(unique_arches)
             else:
                 # 默认架构
-                arches = "amd64;arm64;loong64;sw64;mips64el"
+                if is_25_series:
+                    arches = "amd64;arm64;loong64;sw64;mips64el"
+                else:
+                    arches = "amd64;arm64;loongarch64;sw_64;mips64el"
 
             # 准备changelog - 只使用第一行作为标题
             changelog_text = ""
@@ -1851,18 +1928,21 @@ class BuildExecutor:
             logger.info(f"使用CRP项目名: {crp_project_name}")
 
             # 调用CRP API提交打包任务（project_id=0让CRPService自动解析）
-            result = CRPService.submit_build(
-                token=token,
-                topic_id=int(self.task.crp_topic_id),
-                project_id=0,
-                project_name=crp_project_name,
-                branch=branch,
-                commit=commit_hash,
-                tag=self.task.version,
-                arches=arches,
-                branch_id=config.crp_branch_id,
-                changelog=changelog_text,
-            )
+            # 同一仓库并发提交会让 CRP 构建节点并发 clone 同一仓库而崩溃(exit 134)，
+            # 复用仓库锁串行化 CRP 提交（含内部 list/delete/create），让任务错开创建。
+            with repo_lock:
+                result = CRPService.submit_build(
+                    token=token,
+                    topic_id=int(self.task.crp_topic_id),
+                    project_id=0,
+                    project_name=crp_project_name,
+                    branch=branch,
+                    commit=commit_hash,
+                    tag=self.task.version,
+                    arches=arches,
+                    branch_id=branch_id,
+                    changelog=changelog_text,
+                )
 
             if not result or not result.get("success"):
                 raise Exception("CRP打包任务提交失败，请检查配置或查看日志")
@@ -1871,18 +1951,22 @@ class BuildExecutor:
             self.task.crp_build_id = str(result.get("build_id", 0))
             self.task.crp_build_url = result.get("url", "")
             self.task.crp_build_status = "building"
+            self.task.crp_commit_hash = commit_hash
             db.session.commit()
 
+            # 打包分支为用户选择的 CRP 分支（branch_name 来自 CRP_BRANCHES 映射）
+            crp_branch_name = CRPService.get_branch_name(branch_id)
+            topic_name = self.task.crp_topic_name or f"主题#{self.task.crp_topic_id}"
+
+            # 仓库地址为 CRP 构建完成后生成的子仓库（apt 源）地址，
+            # 提交时尚未生成，打包信息区块会在构建完成后按需拉取。
             step.log_message = (
-                f"CRP打包任务已提交\n"
-                f"主题ID: {self.task.crp_topic_id}\n"
-                f"项目: {self.project.name}\n"
-                f"分支: {branch}\n"
-                f"Commit: {commit_hash[:8]}\n"
-                f"版本: {self.task.version}\n"
-                f"架构: {arches}\n"
-                f"Build ID: {self.task.crp_build_id}\n"
-                f"URL: {self.task.crp_build_url}"
+                f"打包分支：{crp_branch_name}\n"
+                f"主题：{topic_name}\n"
+                f"CRP地址：{self.task.crp_build_url}\n"
+                f"仓库地址：（构建完成后在下方'打包信息'中查看）\n"
+                f"包版本号：{self.task.version}\n"
+                f"包hash：{commit_hash}"
             )
 
             logger.info(
@@ -1893,16 +1977,134 @@ class BuildExecutor:
             logger.exception(f"CRP打包失败: task_id={self.task_id}, error={e}")
             raise Exception(f"CRP打包失败: {str(e)}")
 
-    def _step_9_monitor_build(self, step):
-        """步骤9: 监控打包状态"""
-        # 目前不监控打包状态，直接标记为待实现
-        step.log_message = (
-            "CRP打包监控功能待实现\n"
-            "打包任务已提交到CRP平台，请前往CRP平台查看打包状态\n"
-            f"URL: {self.task.crp_build_url if self.task.crp_build_url else 'N/A'}"
+    def _find_target_release(self, releases, release_id=0):
+        """从 CRP 主题的 release 列表中找到本任务对应的包
+
+        优先用提交打包时拿到的 release ID 精确匹配，其次按包 hash、最后按
+        CRP 项目名匹配。
+        """
+        if not releases:
+            return None
+        if release_id:
+            for r in releases:
+                if r.get("id") == release_id:
+                    return r
+        commit = (self.task.crp_commit_hash or "").strip()
+        if commit:
+            for r in releases:
+                if (r.get("commit") or "").strip() == commit:
+                    return r
+        crp_project_name = (
+            self.project.crp_project_name
+            if hasattr(self.project, "crp_project_name") and self.project.crp_project_name
+            else f"{self.project.name}-v25"
         )
-        logger.info(f"跳过CRP打包监控: task_id={self.task_id}")
-        time.sleep(1)
+        for r in releases:
+            if r.get("project_name") == crp_project_name:
+                return r
+        return None
+
+    def _step_9_monitor_build(self, step):
+        """步骤9: 监控 CRP 打包状态，直到上传完成（UPLOAD_OK）或失败/超时
+
+        通过轮询 CRP 主题下对应 release 的构建状态实现：在打包上传完成前步骤保持
+        running，避免任务进度提前显示 100%。构建状态来自 CRP 的 BuildState，
+        上传完成对应 UPLOAD_OK。
+        """
+        from app.services.crp_service import CRPService
+
+        if not self.task.crp_topic_id:
+            step.log_message = "未关联 CRP 主题，跳过打包监控"
+            logger.warning(f"跳过打包监控：无 crp_topic_id, task_id={self.task_id}")
+            return
+
+        token = CRPService.get_token()
+        if not token:
+            raise Exception("CRP 登录失败，无法监控打包状态")
+
+        topic_id = int(self.task.crp_topic_id)
+        release_id = 0
+        try:
+            release_id = int(self.task.crp_build_id) if self.task.crp_build_id else 0
+        except (TypeError, ValueError):
+            release_id = 0
+
+        # 终端状态集合
+        success_states = {"UPLOAD_OK", "OK", "SUCCESS"}
+        failed_states = {"APPLY_FAILED", "UPLOAD_GIVEUP", "FAILED", "BUILD_FAILED"}
+
+        # 等待 release 出现（最多约 5 分钟）
+        find_max = 20
+        find_interval = 15
+        release = None
+        for i in range(find_max):
+            if self._stop_event.is_set():
+                step.log_message = "监控被中断"
+                return
+            releases = CRPService.list_topic_releases(token, topic_id)
+            release = self._find_target_release(releases, release_id)
+            if release:
+                break
+            step.log_message = f"等待 CRP 创建打包任务...（已等待 {find_interval * (i + 1)}s）"
+            db.session.commit()
+            time.sleep(find_interval)
+        else:
+            raise Exception("提交打包后较长时间未在 CRP 主题下找到对应包，请前往 CRP 平台确认")
+
+        shuttle_task_id = release.get("build_id") or 0
+        logger.info(
+            f"开始监控打包状态: task_id={self.task_id}, topic_id={topic_id}, "
+            f"release_id={release.get('id')}, shuttle_task_id={shuttle_task_id}"
+        )
+
+        # 轮询构建状态
+        max_wait = 7200  # 2 小时
+        interval = 15
+        elapsed = 0
+        last_state = None
+        while elapsed <= max_wait:
+            if self._stop_event.is_set():
+                step.log_message = "监控被中断"
+                self.task.crp_build_status = "cancelled"
+                db.session.commit()
+                return
+
+            releases = CRPService.list_topic_releases(token, topic_id)
+            cur = self._find_target_release(releases, release_id) or release
+            state = str(cur.get("build_state", "UNKNOWN")).upper()
+            shuttle_task_id = cur.get("build_id") or shuttle_task_id
+            state_info = CRPService.get_build_state_info(state)
+
+            if state != last_state:
+                logger.info(f"打包状态变更: task_id={self.task_id}, state={state}")
+                last_state = state
+
+            self.task.crp_build_status = (
+                "success" if state in success_states
+                else "failed" if state in failed_states
+                else "building"
+            )
+
+            minutes = elapsed // 60
+            step.log_message = (
+                f"构建状态：{state_info['label']}（{state}）\n"
+                f"已监控：{minutes} 分钟\n"
+                + (f"Shuttle 任务：{shuttle_task_id}\n" if shuttle_task_id else "")
+                + (f"CRP 主题：{self.task.crp_build_url or ''}\n")
+                + "打包上传完成前不会标记完成，可在下方“Shuttle 构建”查看进度"
+            )
+            db.session.commit()
+
+            if state in success_states:
+                logger.info(f"打包上传完成: task_id={self.task_id}, state={state}")
+                return
+            if state in failed_states:
+                raise Exception(f"CRP 打包失败：{state_info['label']}（{state}），请前往 Shuttle 查看日志")
+
+            time.sleep(interval)
+            elapsed += interval
+
+        raise Exception(f"打包监控超时（{max_wait // 60} 分钟）仍未完成，请前往 CRP/Shuttle 查看")
 
     def _step_1_crp_build(self, step):
         """步骤1: CRP打包（仅CRP模式）"""

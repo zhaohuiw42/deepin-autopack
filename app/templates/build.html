@@ -678,6 +678,56 @@
     font-weight: 500;
 }
 
+/* 打包信息区块 */
+.build-info {
+    margin: 1rem 0;
+    padding: 0.75rem 1rem;
+    background: #eef4ff;
+    border: 1px solid #cfe0ff;
+    border-radius: 8px;
+}
+
+.build-info-title {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #2563eb;
+    margin-bottom: 0.5rem;
+}
+
+.build-info-content {
+    margin: 0;
+    font-family: 'Courier New', monospace;
+    font-size: 0.8rem;
+    line-height: 1.6;
+    color: #334155;
+}
+
+.build-info-content > div {
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.repo-url-value {
+    color: #1d4ed8;
+}
+
+.btn-refresh-repo {
+    background: transparent;
+    border: none;
+    color: #2563eb;
+    cursor: pointer;
+    padding: 0.1rem 0.3rem;
+    font-size: 0.85rem;
+    line-height: 1;
+}
+
+.btn-refresh-repo:hover {
+    color: #1d4ed8;
+}
+
 /* 任务信息 */
 .task-meta {
     display: grid;
@@ -807,6 +857,60 @@
         width: 100%;
     }
 }
+
+/* Shuttle 构建进度区块 */
+.shuttle-block {
+    margin-top: 0.75rem;
+    padding-top: 0.6rem;
+    border-top: 1px dashed #e0e0e0;
+}
+.shuttle-block-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.4rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #555;
+}
+.shuttle-state-text {
+    font-weight: 500;
+    color: #764ba2;
+}
+.shuttle-jobs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-bottom: 0.5rem;
+}
+.shuttle-job-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.15rem 0.5rem;
+    border-radius: 1rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-decoration: none;
+    color: #fff;
+    background: #6c757d;
+    transition: transform 0.15s ease;
+}
+.shuttle-job-badge:hover { transform: translateY(-1px); color: #fff; }
+.shuttle-job-ok { background: #198754; }
+.shuttle-job-builtinok { background: #0d6efd; }
+.shuttle-job-failed { background: #dc3545; }
+.shuttle-job-building {
+    background: #fd7e14;
+    background-image: linear-gradient(90deg, #fd7e14 0%, #ffb347 50%, #fd7e14 100%);
+    background-size: 200% 100%;
+    animation: shuttle-stripes 1.2s linear infinite;
+}
+@keyframes shuttle-stripes {
+    0% { background-position: 0% 0; }
+    100% { background-position: -200% 0; }
+}
+.shuttle-job-other { background: #6c757d; }
+.shuttle-link { margin-top: 0.25rem; }
 </style>
 
 <script>
@@ -858,6 +962,10 @@ async function loadTasks() {
         filteredTasks.forEach(task => {
             const card = createTaskCard(task);
             container.appendChild(card);
+            // 按需拉取 CRP 子仓库地址（仅 CRP 打包模式）
+            ensureRepoUrl(task);
+            // 按需拉取 Shuttle 构建进度（仅 CRP 打包模式）
+            ensureShuttleStatus(task);
         });
 
     } catch (err) {
@@ -889,7 +997,15 @@ function createTaskCard(task) {
 
     // 计算进度百分比
     const completedSteps = task.steps.filter(s => s.status === 'completed').length;
-    const progressPercent = Math.round((completedSteps / task.steps.length) * 100);
+    let progressPercent = Math.round((completedSteps / task.steps.length) * 100);
+    // “监控打包”步骤运行中时，用 Shuttle 各架构完成度细化进度，上传完成前不显示 100%
+    const monitorStep = task.steps.find(s => s.step_name === '监控打包');
+    if (monitorStep && monitorStep.status === 'running' && shuttleCache[task.id] && (shuttleCache[task.id].jobs || []).length) {
+        const jobs = shuttleCache[task.id].jobs;
+        const doneArch = jobs.filter(j => (j.status || '').toUpperCase() === 'UPLOAD_OK').length;
+        const base = Math.round((completedSteps / task.steps.length) * 100);
+        progressPercent = Math.min(99, base + Math.round((100 - base) * (doneArch / jobs.length)));
+    }
 
     // 状态配置
     const statusConfig = {
@@ -948,6 +1064,8 @@ function createTaskCard(task) {
                 ${task.steps.map((step, index) => createStepItem(step, index)).join('')}
             </div>
 
+            ${createBuildInfoSection(task)}
+
             <!-- 任务元信息 -->
             <div class="task-meta">
                 <div class="meta-item">
@@ -989,6 +1107,22 @@ function createTaskCard(task) {
                     <i class="bi bi-box"></i>
                     <a href="${task.crp_build_url}" target="_blank" class="text-decoration-none">
                         CRP构建
+                    </a>
+                </div>
+                ` : ''}
+                ${task.crp_topic_id ? `
+                <div class="meta-item">
+                    <i class="bi bi-layers"></i>
+                    <a href="/topics/${task.crp_topic_id}" class="text-decoration-none" title="查看 CRP 主题详情">
+                        CRP主题
+                    </a>
+                </div>
+                ` : ''}
+                ${task.crp_topic_id ? `
+                <div class="meta-item">
+                    <i class="bi bi-diagram-3"></i>
+                    <a href="https://crp.uniontech.com/#/workflow/workflow?id=${task.crp_topic_id}" target="_blank" class="text-decoration-none" title="跳转到 CRP 工作流">
+                        工作流
                     </a>
                 </div>
                 ` : ''}
@@ -1049,6 +1183,191 @@ function createStepItem(step, index) {
             ${step.error_message ? `<div class="step-log"style="color: #dc3545;">${step.error_message}</div>` : ''}
         </div>
     `;
+}
+
+// 仓库地址缓存：taskId -> 字符串；空串表示已尝试但暂未生成
+const repoUrlCache = {};
+// 正在拉取中的任务，避免轮询时重复请求
+const repoUrlFetching = {};
+// Shuttle 构建进度缓存：taskId -> {found, state_label, build_state, jobs, shuttle_task_id, ts}
+const shuttleCache = {};
+// 正在拉取 Shuttle 进度的任务，避免轮询时重复请求
+const shuttleFetching = {};
+
+// 创建打包信息区块（CRP打包得到的子仓库地址、包版本号、包hash等）
+function createBuildInfoSection(task) {
+    // 仅涉及 CRP 打包的模式展示
+    if (task.mode !== 'normal' && task.mode !== 'crp_only') {
+        return '';
+    }
+    const branch = task.crp_branch_name || '-';
+    const topic = task.crp_topic_name || (task.crp_topic_id ? `主题#${task.crp_topic_id}` : '-');
+    const crpUrl = task.crp_build_url || '-';
+    const version = task.version || '-';
+    const pkgHash = task.crp_commit_hash || '-';
+    // 仓库地址需在 CRP 构建完成后按需拉取，这里先给占位
+    let repoText = '-';
+    if (repoUrlCache[task.id] !== undefined) {
+        repoText = repoUrlCache[task.id] || '暂未生成（构建可能未完成）';
+    } else if (task.crp_topic_id) {
+        repoText = '获取中...';
+    }
+    return `
+        <div class="build-info">
+            <div class="build-info-title">
+                <span><i class="bi bi-info-circle-fill"></i> 打包信息</span>
+                ${task.crp_topic_id ? `<button class="btn-refresh-repo" onclick="fetchRepoUrl(${task.id}, true)" title="刷新仓库地址"><i class="bi bi-arrow-clockwise"></i></button>` : ''}
+            </div>
+            <div class="build-info-content">
+                <div>打包分支：${escapeHtml(branch)}</div>
+                <div>主题：${escapeHtml(topic)}</div>
+                <div>CRP地址：${escapeHtml(crpUrl)}</div>
+                <div>仓库地址：<span id="repo-url-${task.id}" class="repo-url-value">${escapeHtml(repoText)}</span></div>
+                <div>包版本号：${escapeHtml(version)}</div>
+                <div>包hash：${escapeHtml(pkgHash)}</div>
+                ${task.crp_topic_id ? `<div>工作流：<a href="https://crp.uniontech.com/#/workflow/workflow?id=${task.crp_topic_id}" target="_blank" class="text-decoration-none" title="跳转到 CRP 工作流">查看工作流 <i class="bi bi-box-arrow-up-right"></i></a></div>` : ''}
+            </div>
+            <div class="shuttle-block">
+                <div class="shuttle-block-title">
+                    <span><i class="bi bi-hdd-network-fill"></i> Shuttle 构建</span>
+                    <span id="shuttle-state-${task.id}" class="shuttle-state-text">-</span>
+                </div>
+                <div id="shuttle-jobs-${task.id}" class="shuttle-jobs">获取中...</div>
+                <div id="shuttle-link-${task.id}" class="shuttle-link"></div>
+            </div>
+        </div>
+    `;
+}
+
+// 设置仓库地址文本
+function setRepoUrlText(taskId, text) {
+    const el = document.getElementById(`repo-url-${taskId}`);
+    if (el) el.textContent = text;
+}
+
+// 渲染后按需拉取仓库地址（每个任务每个页面会话只自动拉取一次）
+function ensureRepoUrl(task) {
+    if (task.mode !== 'normal' && task.mode !== 'crp_only') return;
+    if (!task.crp_topic_id) return;
+    if (repoUrlCache[task.id] !== undefined) {
+        setRepoUrlText(task.id, repoUrlCache[task.id] || '暂未生成（构建可能未完成）');
+        return;
+    }
+    if (repoUrlFetching[task.id]) return; // 已有请求在途，避免轮询重复拉取
+    setRepoUrlText(task.id, '获取中...');
+    fetchRepoUrl(task.id, false);
+}
+
+// 拉取仓库地址并更新对应任务卡片
+async function fetchRepoUrl(taskId, force) {
+    if (force) delete repoUrlCache[taskId];
+    if (repoUrlCache[taskId] !== undefined) {
+        setRepoUrlText(taskId, repoUrlCache[taskId] || '暂未生成（构建可能未完成）');
+        return;
+    }
+    repoUrlFetching[taskId] = true;
+    setRepoUrlText(taskId, '获取中...');
+    try {
+        const response = await fetch(`/api/tasks/${taskId}/repo-url`);
+        const result = await response.json();
+        if (result.success && result.data && result.data.repo_urls && result.data.repo_urls.length) {
+            const text = result.data.repo_urls.join('\n');
+            repoUrlCache[taskId] = text;
+            setRepoUrlText(taskId, text);
+        } else {
+            repoUrlCache[taskId] = '';
+            setRepoUrlText(taskId, '暂未生成（构建可能未完成）');
+        }
+    } catch (err) {
+        setRepoUrlText(taskId, '获取失败');
+    } finally {
+        repoUrlFetching[taskId] = false;
+    }
+}
+// 渲染后按需拉取 Shuttle 构建进度（仅 CRP 打包模式）
+function ensureShuttleStatus(task) {
+    if (task.mode !== 'normal' && task.mode !== 'crp_only') return;
+    if (!task.crp_topic_id) return;
+    // 先用缓存立即渲染，避免 5s 轮询重建卡片时闪烁
+    renderShuttleStatus(task);
+    const terminal = ['success', 'failed', 'cancelled'].includes(task.status);
+    const now = Date.now();
+    // 已完成且已有缓存则不再刷新；否则后台拉取（节流 8s）
+    if (terminal && shuttleCache[task.id]) return;
+    if (shuttleFetching[task.id]) return;
+    const last = shuttleCache[task.id] ? shuttleCache[task.id].ts : 0;
+    if (now - last < 8000) return;
+    fetchShuttleStatus(task);
+}
+
+// 拉取 Shuttle 构建进度：先经后端解析 CRP release 得到 Shuttle 任务 ID，再直接查 Shuttle 各架构 job
+async function fetchShuttleStatus(task) {
+    shuttleFetching[task.id] = true;
+    try {
+        const resp = await fetch(`/api/tasks/${task.id}/shuttle-status`);
+        const result = await resp.json();
+        if (!result.success || !result.data) { shuttleFetching[task.id] = false; return; }
+        const d = result.data;
+        let jobs = [];
+        if (d.shuttle_task_id) {
+            try {
+                const sresp = await fetch('https://shuttle.uniontech.com/api/shuttle/task/list', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ params: { taskid: String(d.shuttle_task_id) }, pageSize: 50, current: 1 })
+                });
+                const sdata = await sresp.json();
+                const stasks = sdata.tasks || [];
+                if (stasks.length && stasks[0].jobs) jobs = stasks[0].jobs;
+            } catch (e) { /* Shuttle 查询失败时仅展示 CRP 状态 */ }
+        }
+        shuttleCache[task.id] = {
+            found: d.found,
+            state_label: d.build_state_label || '未知',
+            build_state: d.build_state,
+            jobs: jobs,
+            shuttle_task_id: d.shuttle_task_id || 0,
+            ts: Date.now()
+        };
+        renderShuttleStatus(task);
+    } catch (e) { /* 忽略，下次轮询重试 */ }
+    finally { shuttleFetching[task.id] = false; }
+}
+
+// 渲染 Shuttle 构建进度（状态文案 + 各架构徽标 + 跳转入口）
+function renderShuttleStatus(task) {
+    const stateEl = document.getElementById(`shuttle-state-${task.id}`);
+    const jobsEl = document.getElementById(`shuttle-jobs-${task.id}`);
+    const linkEl = document.getElementById(`shuttle-link-${task.id}`);
+    if (!stateEl || !jobsEl || !linkEl) return;
+    const c = shuttleCache[task.id];
+    if (!c) {
+        stateEl.textContent = '等待中…';
+        jobsEl.innerHTML = '<span class="text-muted small">等待 Shuttle 任务创建…</span>';
+        linkEl.innerHTML = '';
+        return;
+    }
+    stateEl.textContent = c.state_label;
+    if (c.jobs && c.jobs.length) {
+        jobsEl.innerHTML = c.jobs.map(j => {
+            const st = (j.status || 'UNKNOWN').toUpperCase();
+            let cls = 'shuttle-job-other';
+            if (st === 'UPLOAD_OK') cls = 'shuttle-job-ok';
+            else if (st === 'FAILED') cls = 'shuttle-job-failed';
+            else if (st === 'BUILD_OK') cls = 'shuttle-job-builtinok';
+            else if (st.includes('BUILD') || st.includes('UPLOAD') || st.includes('APPLY')) cls = 'shuttle-job-building';
+            const url = `https://shuttle.uniontech.com/#/details/build?jobId=${j.id}`;
+            return `<a href="${url}" target="_blank" class="shuttle-job-badge ${cls}" title="${st}">${escapeHtml(j.arch || '')} · ${st}</a>`;
+        }).join('');
+        const first = c.jobs[0];
+        linkEl.innerHTML = `<a href="https://shuttle.uniontech.com/#/details/build?jobId=${first.id}" target="_blank" class="btn btn-sm btn-outline-primary"><i class="bi bi-box-arrow-up-right"></i> 查看 Shuttle 构建</a>`;
+    } else if (c.shuttle_task_id) {
+        jobsEl.innerHTML = '<span class="text-muted small">暂无架构构建信息</span>';
+        linkEl.innerHTML = `<a href="https://shuttle.uniontech.com/" target="_blank" class="btn btn-sm btn-outline-primary"><i class="bi bi-box-arrow-up-right"></i> 前往 Shuttle</a>`;
+    } else {
+        jobsEl.innerHTML = '<span class="text-muted small">等待 Shuttle 任务创建…</span>';
+        linkEl.innerHTML = '';
+    }
 }
 
 // 创建操作按钮

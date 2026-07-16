@@ -54,6 +54,7 @@ class GlobalConfig(db.Model):
     crp_token = db.Column(db.String(255), comment='CRP Token')
     crp_branch_id = db.Column(db.Integer, comment='CRP项目分支ID')
     crp_topic_type = db.Column(db.String(50), default='test', comment='CRP主题类型')
+    crp_topic_members = db.Column(db.Text, comment='创建CRP主题时自动添加的成员账号（分号或逗号分隔的LDAP用户名）')
     https_proxy = db.Column(db.String(200), comment='HTTPS代理配置')
     local_repos_dir = db.Column(db.String(500), default='/tmp/deepin-autopack-repos', comment='本地仓库存储目录')
     ai_api_url = db.Column(db.String(500), comment='AI API地址 (OpenAI兼容)')
@@ -89,7 +90,7 @@ class GlobalConfig(db.Model):
             'ai_api_url': self.ai_api_url,
             'ai_model': self.ai_model,
             'ai_analysis_fingerprint': self.ai_analysis_fingerprint,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None
+            'updated_at': (self.updated_at.isoformat() + 'Z') if (self.updated_at and self.updated_at.tzinfo is None) else (self.updated_at.isoformat() if self.updated_at else None)
         }
     
     def __repr__(self):

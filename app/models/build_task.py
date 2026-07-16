@@ -3,6 +3,21 @@ from datetime import datetime
 from app import db
 
 
+def _utc_iso(dt):
+    """将 naive UTC 时间序列化为带 `Z` 后缀的 ISO-8601 字符串。
+
+    项目所有时间戳都以 naive UTC（``datetime.utcnow``）存储。直接用
+    ``.isoformat()`` 得到的字符串没有时区标记，浏览器 ``new Date(isoStr)``
+    会按本地时区解析，导致显示时间整体偏移本地 UTC 偏移量（如东八区偏 8
+    小时）。补上 ``Z`` 后值为明确的 UTC，前端即可正确显示本地时间。
+    """
+    if not dt:
+        return None
+    if dt.tzinfo is None:
+        return dt.isoformat() + "Z"
+    return dt.isoformat()
+
+
 class BuildTask(db.Model):
     """打包任务模型"""
     __tablename__ = 'build_tasks'
@@ -18,6 +33,7 @@ class BuildTask(db.Model):
     architectures = db.Column(db.JSON)  # 架构列表 ['amd64', 'arm64', 'loongarch64', 'riscv64']
     crp_topic_id = db.Column(db.String(50))  # CRP主题ID（可选）
     crp_topic_name = db.Column(db.String(255))  # CRP主题名称（可选）
+    crp_branch_id = db.Column(db.Integer)  # CRP分支ID（可选，为空时使用全局配置）
     start_commit_hash = db.Column(db.String(40), nullable=False)  # 起始commit
     
     # GitHub Action 相关（package_mode='github_action' 时使用）
@@ -46,6 +62,7 @@ class BuildTask(db.Model):
     crp_build_id = db.Column(db.String(100))  # CRP打包任务ID
     crp_build_status = db.Column(db.String(20))  # pending/building/success/failed
     crp_build_url = db.Column(db.String(500))  # CRP打包任务链接
+    crp_commit_hash = db.Column(db.String(40))  # CRP打包使用的commit hash（包hash）
     
     # 时间戳
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -83,10 +100,13 @@ class BuildTask(db.Model):
             'crp_build_id': self.crp_build_id,
             'crp_build_status': self.crp_build_status,
             'crp_build_url': self.crp_build_url,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
-            'started_at': self.started_at.isoformat() if self.started_at else None,
-            'completed_at': self.completed_at.isoformat() if self.completed_at else None,
+            'crp_topic_name': self.crp_topic_name,
+            'crp_branch_id': self.crp_branch_id,
+            'crp_commit_hash': self.crp_commit_hash,
+            'created_at': _utc_iso(self.created_at),
+            'updated_at': _utc_iso(self.updated_at),
+            'started_at': _utc_iso(self.started_at),
+            'completed_at': _utc_iso(self.completed_at),
             'steps': [step.to_dict() for step in self.steps]
         }
 
@@ -118,7 +138,7 @@ class BuildTaskStep(db.Model):
             'status': self.status,
             'log_message': self.log_message,
             'error_message': self.error_message,
-            'started_at': self.started_at.isoformat() if self.started_at else None,
-            'completed_at': self.completed_at.isoformat() if self.completed_at else None,
+            'started_at': _utc_iso(self.started_at),
+            'completed_at': _utc_iso(self.completed_at),
             'retry_count': self.retry_count
         }

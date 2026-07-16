@@ -1,7 +1,7 @@
 """主页看板路由"""
 from flask import Blueprint, render_template, jsonify
 from app.models import Project
-from app.models.build_task import BuildTask
+from app.models.build_task import BuildTask, _utc_iso
 from app.services.build_task_service import BuildTaskService
 from datetime import datetime, timedelta
 from sqlalchemy import func
@@ -50,8 +50,8 @@ def api_summary():
                 'mode': task.package_mode,
                 'status': task.status,
                 'current_step': task.current_step,
-                'created_at': task.created_at.isoformat() if task.created_at else None,
-                'completed_at': task.completed_at.isoformat() if task.completed_at else None,
+                'created_at': _utc_iso(task.created_at),
+                'completed_at': _utc_iso(task.completed_at),
                 'error_message': task.error_message,
                 'github_pr_url': task.github_pr_url,
                 'crp_build_url': task.crp_build_url,

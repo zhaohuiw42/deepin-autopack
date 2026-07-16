@@ -1,6 +1,10 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
 from app import db
 from app.models import GlobalConfig
+from app.services.crp_service import CRPService
+
+import logging
+logger = logging.getLogger(__name__)
 
 config_bp = Blueprint('config', __name__, url_prefix='/config')
 
@@ -8,11 +12,17 @@ config_bp = Blueprint('config', __name__, url_prefix='/config')
 def get_config_api():
     """获取配置信息的API端点"""
     config = GlobalConfig.get_config()
+    branch_name = CRPService.get_branch_name(config.crp_branch_id) if config.crp_branch_id else ''
+    branch_options = CRPService.get_branch_options()
     return jsonify({
         'success': True,
         'data': {
             'crp_branch_id': config.crp_branch_id,
+            'crp_branch_name': branch_name,
+            'crp_branch_options': branch_options,
+            'is_snipe_branch': config.crp_branch_id in (119, 123, 128),
             'crp_topic_type': config.crp_topic_type,
+            'crp_topic_members': config.crp_topic_members or '',
             'ldap_username': config.ldap_username,
             'github_username': config.github_username,
             'maintainer_name': config.maintainer_name,
@@ -43,6 +53,7 @@ def global_config():
             if crp_branch_id:
                 config.crp_branch_id = int(crp_branch_id)
             config.crp_topic_type = request.form.get('crp_topic_type') or 'test'
+            config.crp_topic_members = request.form.get('crp_topic_members') or None
             
             # 只有当密码字段不为空时才更新密码
             ldap_password = request.form.get('ldap_password')
@@ -115,24 +126,70 @@ def test_gerrit():
 @config_bp.route('/test-crp', methods=['POST'])
 def test_crp():
     """测试 CRP 连接（JSON API）"""
+    import os
+    import subprocess
+
     from app.services.crp_service import CRPService
-    
+
     config = GlobalConfig.get_config()
-    
-    if not config.ldap_username or not config.ldap_password or not config.crp_token:
-        return jsonify({'success': False, 'message': '请先配置 LDAP 账号和 CRP Token'}), 400
-    
+
+    if not config.ldap_username or not config.ldap_password:
+        return jsonify({'success': False, 'message': '请先配置 LDAP 账号和密码'}), 400
+
+    def _refresh_token():
+        """通过 LDAP 账号重新获取并缓存 Token，返回 (token, error_message)"""
+        project_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        script_path = os.path.join(project_dir, 'gen-crp-pwd.py')
+        if not os.path.exists(script_path):
+            return None, f'未找到加密脚本: {script_path}'
+        result = subprocess.run(
+            ['python3', script_path],
+            input=config.ldap_password,
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode != 0 or not result.stdout:
+            err = result.stderr.strip() if result.stderr else '密码加密失败'
+            return None, err
+        token = CRPService.fetch_token(config.ldap_username, result.stdout.strip())
+        if not token:
+            return None, 'CRP 登录失败，请检查 LDAP 账号密码'
+        config.crp_token = token
+        db.session.commit()
+        return token, None
+
+    # 优先用已缓存的 Token，缓存为空则实时获取
+    token = config.crp_token
+    if not token:
+        token, err = _refresh_token()
+        if not token:
+            code = 500 if err and '未找到加密脚本' in err else 400
+            return jsonify({'success': False, 'message': err}), code
+
     try:
-        # 创建 CRP 服务
-        crp = CRPService(config.crp_token)
-        
-        # 测试 API 调用 - 获取主题列表
-        topics = crp.get_topics()
-        
-        if topics:
-            return jsonify({'success': True, 'message': f'CRP 连接成功，找到 {len(topics)} 个主题'})
-        else:
-            return jsonify({'success': False, 'message': 'CRP Token 可能无效或已过期'})
+        user = CRPService.fetch_user(token)
+        # 缓存的 Token 已失效：用 LDAP 账号重新换取并重试一次
+        if not user:
+            logger.info('缓存的 CRP Token 已失效，尝试用 LDAP 账号重新获取...')
+            token, err = _refresh_token()
+            if not token:
+                return jsonify({'success': False, 'message': err or 'CRP Token 无效或已过期'}), 400
+            user = CRPService.fetch_user(token)
+            if not user:
+                return jsonify({'success': False, 'message': 'CRP Token 无效或已过期'}), 400
+
+        if config.crp_branch_id:
+            topics = CRPService.list_topics(
+                token,
+                config.ldap_username,
+                config.crp_branch_id,
+                config.crp_topic_type or 'test'
+            )
+            if topics:
+                return jsonify({'success': True, 'message': f'CRP 连接成功，用户: {user}，找到 {len(topics)} 个主题'})
+            else:
+                return jsonify({'success': True, 'message': f'CRP 连接成功，用户: {user}，当前没有主题'})
+
+        return jsonify({'success': True, 'message': f'CRP 连接成功，用户: {user}'})
     except Exception as e:
         return jsonify({'success': False, 'message': f'测试出错: {str(e)}'})
 
@@ -223,3 +280,5 @@ def test_ai():
         return jsonify({'success': False, 'message': '连接超时'})
     except Exception as e:
         return jsonify({'success': False, 'message': f'连接失败: {str(e)}'})
+
+

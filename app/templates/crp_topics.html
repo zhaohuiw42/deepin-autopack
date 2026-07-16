@@ -8,9 +8,14 @@
         <h2 class="mb-0">
             <i class="bi bi-archive"></i> CRP主题管理
         </h2>
-        <button class="btn btn-primary" onclick="refreshTopics()">
-            <i class="bi bi-arrow-clockwise"></i> 刷新
-        </button>
+        <div class="d-flex align-items-center gap-2">
+            <select id="crpBranchSelect" class="form-select form-select-sm" style="width: auto;" onchange="onBranchChange(this.value)">
+                <option value="">加载分支中...</option>
+            </select>
+            <button class="btn btn-primary" onclick="refreshTopics()">
+                <i class="bi bi-arrow-clockwise"></i> 刷新
+            </button>
+        </div>
     </div>
 
     <!-- 加载提示 -->
@@ -88,8 +93,34 @@
 <script>
 // 页面加载时获取主题列表
 document.addEventListener('DOMContentLoaded', function() {
-    loadTopics();
+    loadBranchOptions();
 });
+
+let currentBranchId = null;
+
+async function loadBranchOptions() {
+    const select = document.getElementById('crpBranchSelect');
+    try {
+        const resp = await fetch('/config/api/config');
+        const result = await resp.json();
+        if (!result.success) return;
+        const options = result.data.crp_branch_options || [];
+        const defaultId = result.data.crp_branch_id;
+        select.innerHTML = options.map(o => `<option value="${o.id}">${o.name}</option>`).join('');
+        if (defaultId) {
+            currentBranchId = defaultId;
+            select.value = defaultId;
+        }
+    } catch (e) {
+        select.innerHTML = '<option value="">分支加载失败</option>';
+    }
+    loadTopics();
+}
+
+function onBranchChange(value) {
+    currentBranchId = value ? parseInt(value) : null;
+    loadTopics();
+}
 
 async function loadTopics() {
     const loading = document.getElementById('loading');
@@ -104,7 +135,8 @@ async function loadTopics() {
     emptyState.style.display = 'none';
 
     try {
-        const response = await fetch('/api/topics');
+        const url = currentBranchId ? `/api/topics?branch_id=${currentBranchId}` : '/api/topics';
+        const response = await fetch(url);
         const result = await response.json();
 
         loading.style.display = 'none';

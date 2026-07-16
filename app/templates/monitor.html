@@ -208,6 +208,15 @@
                                     <i class="bi bi-rocket-takeoff me-1"></i>仅 CRP 打包
                                 </label>
                             </div>
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="radio" name="batchPackageMode" id="batchModeAdvanced" value="advanced" onchange="toggleBatchPackageMode()">
+                                <label class="form-check-label" for="batchModeAdvanced">
+                                    <i class="bi bi-diagram-3 me-1"></i>高级批量
+                                </label>
+                            </div>
+                        </div>
+                        <div class="alert alert-info mt-2 mb-0 py-1 small" id="batchModeHintAdvanced" style="display: none;">
+                            <i class="bi bi-info-circle me-1"></i>高级批量模式下，每个项目可独立配置目标架构，并支持为同一项目添加多个分支主题（每个分支可选择/创建各自的主题），其余公共配置将隐藏。
                         </div>
                     </div>
                 </div>
@@ -239,15 +248,55 @@
                     </div>
                 </div>
 
+                <!-- 高级批量：每个项目独立配置 -->
+                <div class="section-card mb-3" id="batchAdvancedProjectsSection" style="display: none;">
+                    <div class="section-header">
+                        <i class="bi bi-diagram-3 me-2"></i>项目独立配置
+                        <span class="text-muted small ms-2">每个项目可配置多个分支主题与架构</span>
+                        <button class="btn btn-sm btn-outline-primary ms-auto" onclick="autoIncrementAllAdvVersions()">
+                            <i class="bi bi-plus-circle me-1"></i>全部版本+1
+                        </button>
+                    </div>
+                    <div class="section-body" id="batchAdvancedProjectsList">
+                        <!-- 动态填充项目卡片 -->
+                    </div>
+                </div>
+
                 <!-- CRP主题选择 -->
                 <div class="section-card mb-3" id="batchCrpTopicSection">
                     <div class="section-header">
                         <i class="bi bi-collection me-2"></i>CRP主题
                     </div>
                     <div class="section-body">
-                        <select class="form-select" id="batchCrpTopic">
-                            <option value="">选择CRP主题（暂未加载）</option>
-                        </select>
+                        <div class="mb-2">
+                            <select class="form-select form-select-sm" id="batchCrpBranchSelect" onchange="onBranchChanged('batch')">
+                                <option value="">加载中...</option>
+                            </select>
+                        </div>
+                        <div class="input-group mb-2">
+                            <select class="form-select" id="batchCrpTopic" style="flex: 1;">
+                                <option value="">选择CRP主题（暂未加载）</option>
+                            </select>
+                            <button class="btn btn-outline-success" type="button" onclick="showCreateTopicInline('batchCrpTopic', 'batchNewTopicInput')">
+                                <i class="bi bi-plus-circle me-1"></i>新建
+                            </button>
+                        </div>
+                        <div class="d-none" id="batchNewTopicInput">
+                            <div class="input-group mb-2">
+                                <input type="text" class="form-control" id="batchNewTopicName" placeholder="输入新主题名称（回车创建）"
+                                       onkeydown="if(event.key==='Enter'){event.preventDefault();createTopicInline('batchCrpTopic','batchNewTopicName','batchNewTopicInput')}">
+                                <select class="form-select" id="batchNewTopicType" style="max-width:120px">
+                                    <option value="private">私有</option>
+                                    <option value="public" selected>公开</option>
+                                </select>
+                                <button class="btn btn-success" type="button" onclick="createTopicInline('batchCrpTopic','batchNewTopicName','batchNewTopicInput')">
+                                    <i class="bi bi-check-lg"></i>
+                                </button>
+                                <button class="btn btn-outline-secondary" type="button" onclick="hideCreateTopicInline('batchNewTopicInput')">
+                                    <i class="bi bi-x-lg"></i>
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -402,13 +451,35 @@
                         <i class="bi bi-collection me-2"></i>CRP主题
                     </div>
                     <div class="section-body">
-                        <select class="form-select" id="crpTopic">
-                            <option value="">选择CRP主题（暂未加载）</option>
-                        </select>
-                        <small class="form-text text-muted mt-2 d-block">
-                            <i class="bi bi-info-circle me-1"></i>
-                            后续将从CRP平台获取主题列表
-                        </small>
+                        <div class="mb-2">
+                            <select class="form-select form-select-sm" id="crpBranchSelect" onchange="onBranchChanged('crp')">
+                                <option value="">加载中...</option>
+                            </select>
+                        </div>
+                        <div class="input-group mb-2">
+                            <select class="form-select" id="crpTopic" style="flex: 1;">
+                                <option value="">选择CRP主题（暂未加载）</option>
+                            </select>
+                            <button class="btn btn-outline-success" type="button" onclick="showCreateTopicInline('crpTopic', 'crpNewTopicInput')">
+                                <i class="bi bi-plus-circle me-1"></i>新建
+                            </button>
+                        </div>
+                        <div class="d-none" id="crpNewTopicInput">
+                            <div class="input-group mb-2">
+                                <input type="text" class="form-control" id="crpNewTopicName" placeholder="输入新主题名称（回车创建）"
+                                       onkeydown="if(event.key==='Enter'){event.preventDefault();createTopicInline('crpTopic','crpNewTopicName','crpNewTopicInput')}">
+                                <select class="form-select" id="crpNewTopicType" style="max-width:120px">
+                                    <option value="private">私有</option>
+                                    <option value="public" selected>公开</option>
+                                </select>
+                                <button class="btn btn-success" type="button" onclick="createTopicInline('crpTopic','crpNewTopicName','crpNewTopicInput')">
+                                    <i class="bi bi-check-lg"></i>
+                                </button>
+                                <button class="btn btn-outline-secondary" type="button" onclick="hideCreateTopicInline('crpNewTopicInput')">
+                                    <i class="bi bi-x-lg"></i>
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -507,7 +578,7 @@
                                             <strong>仅 CRP 打包</strong>
                                         </div>
                                         <small class="text-muted d-block mt-1">
-                                            不提交 changelog，直接使用现有版本进行 CRP 打包
+                                            不提交 changelog，直接进行 CRP 打包；默认用现有版本，也可手动升版本
                                         </small>
                                     </div>
                                 </label>
@@ -533,7 +604,7 @@
                         </div>
                         <div class="alert alert-warning mt-3 mb-0" id="modeHintCrp" style="display: none;">
                             <i class="bi bi-exclamation-triangle me-2"></i>
-                            <span>仅 CRP 打包模式将使用现有 changelog 中的版本号，无需填写新版本</span>
+                            <span>仅 CRP 打包模式不更改 changelog，默认使用现有版本号；如需升版本可手动修改新版本号或点击自动+1</span>
                         </div>
                         <div class="alert alert-primary mt-3 mb-0" id="modeHintGithubAction" style="display: none;">
                             <i class="bi bi-info-circle me-2"></i>
@@ -966,6 +1037,46 @@
     font-size: 0.875rem;
 }
 
+/* 高级批量模式：每项目独立配置卡片 */
+.adv-project-card {
+    border: 1px solid #e3e6ec;
+    border-radius: 0.5rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+.adv-card-header {
+    background: #f8f9fa;
+    border-bottom: 1px solid #e9ecef;
+    padding: 0.5rem 0.75rem;
+}
+.adv-card-header code {
+    color: #6c757d;
+}
+.adv-arch-selector {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 0;
+}
+.adv-bt-list {
+    border-left: 2px solid #e9ecef;
+    padding-left: 0.5rem;
+}
+.adv-bt-arch {
+    background: #fbfcfd;
+    border: 1px dashed #e3e6ec;
+    border-radius: 0.375rem;
+    padding: 0.35rem 0.5rem;
+}
+.adv-bt-arch .adv-arch-selector {
+    margin-top: 0.2rem;
+}
+.adv-bt-row .input-group-sm > .form-select {
+    min-width: 0;
+}
+.adv-arch-actions .btn {
+    font-size: 0.75rem;
+    line-height: 1.2;
+}
+
 .section-card {
     border: 1px solid #e0e0e0;
     border-radius: 8px;
@@ -1396,20 +1507,128 @@ function openPackageModal(projectId, projectName, currentVersion, githubBranch, 
     document.getElementById('commitHash').textContent = commitHash || '无提交';
     document.getElementById('commitMessage').textContent = commitMessage || '暂无提交信息';
     
+    loadBranchOptions('crpBranchSelect');
     loadCRPTopics();
     
     const modal = new bootstrap.Modal(document.getElementById('packageModal'));
     modal.show();
 }
 
+// 加载分支选项
+async function loadBranchOptions(selectId, defaultBranchId) {
+    const resp = await fetch('/config/api/config');
+    const result = await resp.json();
+    if (!result.success) return;
+
+    const select = document.getElementById(selectId);
+    const options = result.data.crp_branch_options || [];
+    select.innerHTML = '';
+    options.forEach(opt => {
+        const option = document.createElement('option');
+        option.value = opt.id;
+        option.textContent = opt.name;
+        select.appendChild(option);
+    });
+    // 默认选中全局配置的分支
+    if (defaultBranchId) {
+        select.value = defaultBranchId;
+    }
+}
+
+// 分支切换时重新加载主题列表
+function onBranchChanged(prefix) {
+    const branchId = prefix === 'crp'
+        ? document.getElementById('crpBranchSelect').value
+        : document.getElementById('batchCrpBranchSelect').value;
+    if (!branchId) return;
+
+    if (prefix === 'crp') {
+        loadCRPTopics(branchId);
+    } else {
+        loadBatchCRPTopics(branchId);
+    }
+}
+
+// 显示/隐藏创建主题输入框
+function showCreateTopicInline(selectId, inputGroupId) {
+    document.getElementById(inputGroupId).classList.remove('d-none');
+    const input = document.getElementById(inputGroupId).querySelector('input[type="text"]');
+    if (input) { input.value = ''; input.focus(); }
+}
+
+function hideCreateTopicInline(inputGroupId) {
+    document.getElementById(inputGroupId).classList.add('d-none');
+}
+
+// 在线创建CRP主题并选中
+async function createTopicInline(selectId, inputId, inputGroupId) {
+    const input = document.getElementById(inputId);
+    const name = input.value.trim();
+    if (!name) {
+        showToast('请输入主题名称', 'warning');
+        input.focus();
+        return;
+    }
+
+    const createBtn = document.getElementById(inputGroupId).querySelector('.btn-success');
+    const origHtml = createBtn.innerHTML;
+    createBtn.disabled = true;
+    createBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+    try {
+        // 获取公私有选择
+        let tpcType = 'public';
+        const typeSelect = document.getElementById(inputGroupId.replace('Input', 'Type'));
+        if (typeSelect) { tpcType = typeSelect.value; }
+
+        // 获取分支ID
+        const branchSelect = inputGroupId.includes('crp')
+            ? document.getElementById('crpBranchSelect')
+            : document.getElementById('batchCrpBranchSelect');
+        const branchId = branchSelect ? branchSelect.value : '';
+
+        const resp = await fetch('/api/topics/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: name, description: name, tpc_type: tpcType, branch_id: branchId ? parseInt(branchId) : undefined })
+        });
+        const result = await resp.json();
+
+        if (result.success) {
+            const topicId = result.data.id;
+            const topicName = result.data.name;
+
+            // 将新主题添加到下拉框并选中
+            const select = document.getElementById(selectId);
+            const option = document.createElement('option');
+            option.value = topicId;
+            option.textContent = `${topicName} (public)`;
+            option.dataset.topicName = topicName;
+            select.appendChild(option);
+            select.value = topicId;
+
+            hideCreateTopicInline(inputGroupId);
+            showToast(`主题 [${topicName}] 创建成功`, 'success');
+        } else {
+            showToast(`创建失败: ${result.message}`, 'danger');
+        }
+    } catch (error) {
+        showToast(`创建失败: ${error.message}`, 'danger');
+    } finally {
+        createBtn.disabled = false;
+        createBtn.innerHTML = origHtml;
+    }
+}
+
 // 加载CRP主题列表
-async function loadCRPTopics() {
+async function loadCRPTopics(branchId) {
     const select = document.getElementById('crpTopic');
     select.disabled = true;
     select.innerHTML = '<option value="">正在加载主题...</option>';
     
     try {
-        const response = await fetch('/api/topics');
+        const url = branchId ? `/api/topics?branch_id=${branchId}` : '/api/topics';
+        const response = await fetch(url);
         const result = await response.json();
         
         if (result.success && result.data && result.data.length > 0) {
@@ -1499,8 +1718,13 @@ function togglePackageMode() {
             crpSection.style.pointerEvents = 'auto';
         }
         if (versionSection) {
-            versionSection.style.opacity = '0.5';
-            versionSection.style.pointerEvents = 'none';
+            versionSection.style.opacity = '1';
+            versionSection.style.pointerEvents = 'auto';
+        }
+        // 仅 CRP 打包不更改 changelog，默认使用当前版本号；如需升版本可手动修改或点击自动+1
+        const curVerCrp = document.getElementById('currentVersionDisplay').textContent;
+        if (curVerCrp && curVerCrp !== '未知' && curVerCrp !== '-') {
+            document.getElementById('newVersion').value = curVerCrp;
         }
     } else if (selectedMode === 'github_action') {
         if (modeHintGithubAction) modeHintGithubAction.style.display = 'block';
@@ -1532,6 +1756,11 @@ function togglePackageMode() {
         if (versionSection) {
             versionSection.style.opacity = '1';
             versionSection.style.pointerEvents = 'auto';
+        }
+        // 正常打包会生成新 changelog，恢复为当前版本 +1
+        const curVerNormal = document.getElementById('currentVersionDisplay').textContent;
+        if (curVerNormal && curVerNormal !== '未知' && curVerNormal !== '-') {
+            document.getElementById('newVersion').value = incrementVersion(curVerNormal);
         }
     }
 }
@@ -1711,8 +1940,19 @@ function submitPackageTask() {
         'github_action': 'github_action'
     };
     const packageMode = modeMap[selectedMode];
-    const newVersion = document.getElementById('newVersion').value.trim();
-    
+    let newVersion = document.getElementById('newVersion').value.trim();
+
+    // 仅 CRP 打包（crp_only）不更改 changelog：用户可手动填写新版本号以升版本打包，
+    // 未填写时回退到当前版本号（保持原行为）
+    if (packageMode === 'crp_only') {
+        if (!newVersion) {
+            const curVer = currentProjectData.currentVersion;
+            if (curVer && curVer !== '未知') {
+                newVersion = curVer;
+            }
+        }
+    }
+
     // GitHub Action 模式的特殊处理
     if (packageMode === 'github_action') {
         const actionSelect = document.getElementById('githubActionSelect');
@@ -1729,8 +1969,8 @@ function submitPackageTask() {
         return;
     }
     
-    if (packageMode !== 'crp_only' && !newVersion) {
-        showToast('请输入新版本号', 'warning');
+    if (!newVersion) {
+        showToast('请输入版本号', 'warning');
         return;
     }
     
@@ -1760,6 +2000,8 @@ function submitPackageTask() {
         }
     }
     
+    const selectedBranchId = document.getElementById('crpBranchSelect').value;
+
     const requestData = {
         project_id: currentProjectData.projectId,
         mode: packageMode,
@@ -1767,6 +2009,7 @@ function submitPackageTask() {
         architectures: architectures,
         crp_topic_id: crpTopicId,
         crp_topic_name: crpTopicName,
+        crp_branch_id: selectedBranchId ? parseInt(selectedBranchId) : undefined,
         start_commit_hash: currentProjectData.commitHash || ''
     };
     
@@ -2315,8 +2558,12 @@ function openBatchPackModal(projects) {
         `;
         tbody.appendChild(tr);
     });
-    
+
+    // 渲染高级批量模式的每项目独立配置卡片
+    renderAdvancedProjectCards(projects);
+
     // 加载CRP主题
+    loadBranchOptions('batchCrpBranchSelect');
     loadBatchCRPTopics();
     
     // 重置模式为正常打包
@@ -2328,13 +2575,14 @@ function openBatchPackModal(projects) {
 }
 
 // 加载批量打包的CRP主题
-async function loadBatchCRPTopics() {
+async function loadBatchCRPTopics(branchId) {
     const select = document.getElementById('batchCrpTopic');
     select.disabled = true;
     select.innerHTML = '<option value="">正在加载主题...</option>';
     
     try {
-        const response = await fetch('/api/topics');
+        const url = branchId ? `/api/topics?branch_id=${branchId}` : '/api/topics';
+        const response = await fetch(url);
         const result = await response.json();
         
         if (result.success && result.data && result.data.length > 0) {
@@ -2362,20 +2610,360 @@ async function loadBatchCRPTopics() {
     }
 }
 
+// ==================== 高级批量打包模式 ====================
+
+// 缓存分支选项与全局默认分支，避免重复请求
+async function ensureAdvBranchOptions() {
+    if (window.advBranchOptions) return window.advBranchOptions;
+    try {
+        const resp = await fetch('/config/api/config');
+        const result = await resp.json();
+        if (result.success) {
+            window.advBranchOptions = result.data.crp_branch_options || [];
+            window.advDefaultBranchId = result.data.crp_branch_id || '';
+        }
+    } catch (e) {
+        console.error('加载分支选项失败:', e);
+        window.advBranchOptions = [];
+    }
+    return window.advBranchOptions;
+}
+
+function buildAdvBranchOptionsHtml(selectedId) {
+    const options = window.advBranchOptions || [];
+    let html = '<option value="">选择分支</option>';
+    options.forEach(opt => {
+        const sel = String(opt.id) === String(selectedId) ? ' selected' : '';
+        html += `<option value="${opt.id}"${sel}>${opt.name}</option>`;
+    });
+    return html;
+}
+
+function buildAdvArchCheckboxesHtml(prefix) {
+    const arches = [
+        {value: 'amd64', icon: 'bi-pc-display', label: 'amd64'},
+        {value: 'arm64', icon: 'bi-phone', label: 'arm64'},
+        {value: 'loong64', icon: 'bi-cpu', label: 'loong64'},
+        {value: 'sw64', icon: 'bi-cpu', label: 'sw64'},
+        {value: 'mips64el', icon: 'bi-cpu', label: 'mips64el'}
+    ];
+    let html = '';
+    arches.forEach(a => {
+        html += `<div class="form-check form-check-inline">
+            <input class="form-check-input adv-arch" type="checkbox" value="${a.value}" id="${prefix}-arch-${a.value}" checked>
+            <label class="form-check-label" for="${prefix}-arch-${a.value}">
+                <i class="bi ${a.icon} me-1"></i>${a.label}
+            </label>
+        </div>`;
+    });
+    return html;
+}
+
+// 渲染高级批量模式的每项目独立配置卡片
+async function renderAdvancedProjectCards(projects) {
+    const container = document.getElementById('batchAdvancedProjectsList');
+    if (!container) return;
+    container.innerHTML = '<div class="text-muted small py-2"><span class="spinner-border spinner-border-sm me-1"></span>正在加载...</div>';
+
+    await ensureAdvBranchOptions();
+    const defaultBranchId = window.advDefaultBranchId || '';
+
+    container.innerHTML = '';
+    if (!projects || projects.length === 0) {
+        container.innerHTML = '<div class="text-muted small py-2">没有可配置的项目</div>';
+        return;
+    }
+    projects.forEach((project, index) => {
+        const currentVersion = project.currentVersion || '未知';
+        const newVersion = currentVersion !== '未知' ? currentVersion : '';
+        const prefix = `adv-proj-${index}`;
+
+        const card = document.createElement('div');
+        card.className = 'card mb-3 adv-project-card';
+        card.dataset.projectId = project.id;
+        card.dataset.projectName = project.name;
+        card.innerHTML = `
+            <div class="card-header d-flex justify-content-between align-items-center adv-card-header">
+                <div>
+                    <strong><i class="bi bi-box me-1"></i>${escapeHtml(project.name)}</strong>
+                    <span class="text-muted ms-2">当前: <code>${escapeHtml(currentVersion)}</code></span>
+                </div>
+                <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#${prefix}-body">
+                    <i class="bi bi-chevron-down"></i>
+                </button>
+            </div>
+            <div class="card-body collapse show" id="${prefix}-body">
+                <input type="hidden" class="adv-project-id" value="${project.id}">
+                <input type="hidden" class="adv-commit-hash" value="${project.commitHash || ''}">
+                <div class="row g-2 mb-3">
+                    <div class="col-md-4">
+                        <label class="form-label small text-muted mb-1">版本号（仅CRP，不修改）</label>
+                        <input type="text" class="form-control form-control-sm adv-new-version" value="${newVersion}" placeholder="未知版本" data-current-version="${currentVersion}" readonly>
+                    </div>
+                </div>
+                <div>
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <label class="form-label small text-muted mb-0"><i class="bi bi-collection me-1"></i>分支主题（每个分支主题独立配置目标架构）</label>
+                        <button class="btn btn-sm btn-outline-success py-0 px-2" type="button" onclick="addAdvBranchTopicRow(this)">
+                            <i class="bi bi-plus-lg me-1"></i>添加分支主题
+                        </button>
+                    </div>
+                    <div class="adv-bt-list"></div>
+                </div>
+            </div>
+        `;
+        container.appendChild(card);
+
+        // 默认添加一行分支主题
+        addAdvBranchTopicRow(card.querySelector('.adv-bt-list'), defaultBranchId);
+    });
+}
+
+// 添加一个分支主题行
+// target 可以是"添加分支主题"按钮，也可以直接传入 .adv-bt-list 容器
+function addAdvBranchTopicRow(target, preselectBranchId) {
+    let container;
+    if (target && target.classList && target.classList.contains('adv-bt-list')) {
+        container = target;
+    } else {
+        // 来自"添加分支主题"按钮：沿用同项目首行的分支
+        container = target.closest('.card-body').querySelector('.adv-bt-list');
+        if (preselectBranchId === undefined) {
+            const firstBranch = container.querySelector('.adv-bt-branch');
+            preselectBranchId = firstBranch ? firstBranch.value : (window.advDefaultBranchId || '');
+        }
+    }
+    const branchId = preselectBranchId !== undefined ? preselectBranchId : (window.advDefaultBranchId || '');
+
+    // 为本行生成唯一前缀，避免架构 checkbox 的 id 冲突
+    window.advRowSeq = (window.advRowSeq || 0) + 1;
+    const rowPrefix = `adv-row-${window.advRowSeq}`;
+
+    const row = document.createElement('div');
+    row.className = 'adv-bt-row mb-2';
+    row.innerHTML = `
+        <div class="input-group input-group-sm">
+            <select class="form-select adv-bt-branch" onchange="onAdvBranchChanged(this)">
+                ${buildAdvBranchOptionsHtml(branchId)}
+            </select>
+            <select class="form-select adv-bt-topic" style="flex:2;">
+                <option value="">${branchId ? '正在加载主题...' : '请先选择分支'}</option>
+            </select>
+            <button class="btn btn-outline-success" type="button" onclick="showAdvCreateTopic(this)" title="创建主题">
+                <i class="bi bi-plus-circle"></i>
+            </button>
+            <button class="btn btn-outline-danger" type="button" onclick="removeAdvBranchTopicRow(this)" title="删除该行">
+                <i class="bi bi-dash-circle"></i>
+            </button>
+        </div>
+        <div class="adv-bt-arch mt-1">
+            <div class="d-flex justify-content-between align-items-center">
+                <span class="text-muted small"><i class="bi bi-cpu me-1"></i>目标架构</span>
+                <div class="adv-arch-actions">
+                    <button class="btn btn-sm btn-outline-primary py-0 px-2" type="button" onclick="selectAllAdvArchs(this)">全选</button>
+                    <button class="btn btn-sm btn-outline-secondary py-0 px-2" type="button" onclick="clearAllAdvArchs(this)">清空</button>
+                </div>
+            </div>
+            <div class="adv-arch-selector">${buildAdvArchCheckboxesHtml(rowPrefix)}</div>
+        </div>
+        <div class="adv-bt-create d-none mt-1">
+            <div class="input-group input-group-sm">
+                <input type="text" class="form-control adv-bt-topic-name" placeholder="输入新主题名称（回车创建）" onkeydown="if(event.key==='Enter'){event.preventDefault();createAdvTopicInline(this)}">
+                <select class="form-select adv-bt-topic-type" style="max-width:100px">
+                    <option value="private">私有</option>
+                    <option value="public" selected>公开</option>
+                </select>
+                <button class="btn btn-success" type="button" onclick="createAdvTopicInline(this)">创建</button>
+                <button class="btn btn-outline-secondary" type="button" onclick="hideAdvCreateTopic(this)">取消</button>
+            </div>
+        </div>
+    `;
+    container.appendChild(row);
+    if (branchId) {
+        loadAdvTopics(row.querySelector('.adv-bt-topic'), branchId);
+    }
+}
+
+function removeAdvBranchTopicRow(btn) {
+    const row = btn.closest('.adv-bt-row');
+    const list = row.parentElement;
+    if (list.children.length <= 1) {
+        showToast('至少保留一个分支主题', 'warning', '提示');
+        return;
+    }
+    row.remove();
+}
+
+function onAdvBranchChanged(select) {
+    const branchId = select.value;
+    const topicSelect = select.closest('.adv-bt-row').querySelector('.adv-bt-topic');
+    if (!branchId) {
+        topicSelect.innerHTML = '<option value="">请先选择分支</option>';
+        return;
+    }
+    loadAdvTopics(topicSelect, branchId);
+}
+
+async function loadAdvTopics(topicSelect, branchId) {
+    if (!topicSelect) return;
+    topicSelect.disabled = true;
+    topicSelect.innerHTML = '<option value="">正在加载主题...</option>';
+    try {
+        const url = branchId ? `/api/topics?branch_id=${branchId}` : '/api/topics';
+        const response = await fetch(url);
+        const result = await response.json();
+        if (result.success && result.data && result.data.length > 0) {
+            topicSelect.innerHTML = '<option value="">请选择主题</option>';
+            result.data.forEach(topic => {
+                const option = document.createElement('option');
+                option.value = topic.ID;
+                option.textContent = `${topic.Name} (${topic.Type})`;
+                option.dataset.topicName = topic.Name;
+                topicSelect.appendChild(option);
+            });
+            const lastTopic = result.data[result.data.length - 1];
+            topicSelect.value = lastTopic.ID;
+        } else {
+            topicSelect.innerHTML = '<option value="">暂无可用主题</option>';
+        }
+    } catch (error) {
+        console.error('加载主题失败:', error);
+        topicSelect.innerHTML = '<option value="">加载主题失败</option>';
+    } finally {
+        topicSelect.disabled = false;
+    }
+}
+
+function showAdvCreateTopic(btn) {
+    const createDiv = btn.closest('.adv-bt-row').querySelector('.adv-bt-create');
+    createDiv.classList.remove('d-none');
+    const input = createDiv.querySelector('.adv-bt-topic-name');
+    if (input) { input.value = ''; input.focus(); }
+}
+
+function hideAdvCreateTopic(btn) {
+    btn.closest('.adv-bt-row').querySelector('.adv-bt-create').classList.add('d-none');
+}
+
+async function createAdvTopicInline(el) {
+    const row = el.closest('.adv-bt-row');
+    const input = row.querySelector('.adv-bt-topic-name');
+    const name = input.value.trim();
+    if (!name) {
+        showToast('请输入主题名称', 'warning');
+        input.focus();
+        return;
+    }
+    const typeSelect = row.querySelector('.adv-bt-topic-type');
+    const tpcType = typeSelect ? typeSelect.value : 'public';
+    const branchId = row.querySelector('.adv-bt-branch').value;
+
+    const createBtn = row.querySelector('.adv-bt-create .btn-success');
+    const origHtml = createBtn.innerHTML;
+    createBtn.disabled = true;
+    createBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+    try {
+        const resp = await fetch('/api/topics/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                name: name,
+                description: name,
+                tpc_type: tpcType,
+                branch_id: branchId ? parseInt(branchId) : undefined
+            })
+        });
+        const result = await resp.json();
+        if (result.success) {
+            const topicId = result.data.id;
+            const topicName = result.data.name;
+            const topicSelect = row.querySelector('.adv-bt-topic');
+            const option = document.createElement('option');
+            option.value = topicId;
+            option.textContent = `${topicName} (${tpcType})`;
+            option.dataset.topicName = topicName;
+            topicSelect.appendChild(option);
+            topicSelect.value = topicId;
+            row.querySelector('.adv-bt-create').classList.add('d-none');
+            showToast(`主题 [${topicName}] 创建成功`, 'success');
+        } else {
+            showToast(`创建失败: ${result.message}`, 'danger');
+        }
+    } catch (error) {
+        showToast(`创建失败: ${error.message}`, 'danger');
+    } finally {
+        createBtn.disabled = false;
+        createBtn.innerHTML = origHtml;
+    }
+}
+
+function selectAllAdvArchs(btn) {
+    btn.closest('.adv-bt-row').querySelectorAll('.adv-arch').forEach(cb => { cb.checked = true; });
+}
+
+function clearAllAdvArchs(btn) {
+    btn.closest('.adv-bt-row').querySelectorAll('.adv-arch').forEach(cb => { cb.checked = false; });
+}
+
+function autoIncrementAllAdvVersions() {
+    document.querySelectorAll('.adv-new-version').forEach(input => {
+        const currentVersion = input.getAttribute('data-current-version');
+        if (currentVersion && currentVersion !== '未知') {
+            input.value = incrementVersion(currentVersion);
+        }
+    });
+}
+
+// 简单的 HTML 转义，避免项目名含特殊字符破坏模板
+function escapeHtml(str) {
+    if (str == null) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+
 // 切换批量打包模式
 function toggleBatchPackageMode() {
     const selectedMode = document.querySelector('input[name="batchPackageMode"]:checked').value;
     const projectsSection = document.getElementById('batchProjectsSection');
     const crpSection = document.getElementById('batchCrpTopicSection');
     const archSection = document.getElementById('batchArchSection');
+    const advancedSection = document.getElementById('batchAdvancedProjectsSection');
+    const advancedHint = document.getElementById('batchModeHintAdvanced');
     const versionInputs = document.querySelectorAll('.batch-new-version');
-    
+
+    // 高级批量模式：隐藏公共区块，启用每项目独立配置
+    if (selectedMode === 'advanced') {
+        projectsSection.style.display = 'none';
+        crpSection.style.display = 'none';
+        archSection.style.display = 'none';
+        advancedSection.style.display = '';
+        if (advancedHint) advancedHint.style.display = 'block';
+        return;
+    }
+
+    // 其余模式：恢复公共区块显示，隐藏高级区块
+    projectsSection.style.display = '';
+    crpSection.style.display = '';
+    archSection.style.display = '';
+    advancedSection.style.display = 'none';
+    if (advancedHint) advancedHint.style.display = 'none';
+
     if (selectedMode === 'crp') {
-        // 仅CRP打包：版本号置灰，需要CRP和架构
-        projectsSection.style.opacity = '0.5';
+        // 仅CRP打包：不更改 changelog，版本号默认为当前版本，可手动升版本；需要CRP和架构
+        projectsSection.style.opacity = '1';
+        projectsSection.style.pointerEvents = 'auto';
         versionInputs.forEach(input => {
-            input.disabled = true;
-            input.value = '';
+            input.disabled = false;
+            const curVer = input.getAttribute('data-current-version');
+            if (curVer && curVer !== '未知') {
+                input.value = curVer;
+            }
         });
         crpSection.style.opacity = '1';
         crpSection.style.pointerEvents = 'auto';
@@ -2438,91 +3026,172 @@ async function submitBatchPackTask() {
         showToast('请选择打包模式', 'warning', '提示');
         return;
     }
-    
+
     const selectedModeValue = selectedModeRadio.value;
-    const modeMap = {
-        'normal': 'normal',
-        'changelog': 'changelog_only',
-        'crp': 'crp_only'
-    };
-    const packageMode = modeMap[selectedModeValue];
-    
-    // 收集项目信息
-    const rows = document.querySelectorAll('#batchProjectsList tr');
-    const projectsData = [];
-    let hasVersionError = false;
-    
-    rows.forEach(row => {
-        const name = row.querySelector('strong').textContent;
-        const projectId = row.querySelector('.batch-project-id').value;
-        const commitHash = row.querySelector('.batch-commit-hash').value;
-        const newVersion = row.querySelector('.batch-new-version').value.trim();
-        
-        if (packageMode !== 'crp_only' && !newVersion) {
-            hasVersionError = true;
+    const tasks = [];
+
+    if (selectedModeValue === 'advanced') {
+        // 高级批量：每个项目独立配置架构与版本，并可同时配置多个分支主题
+        const cards = document.querySelectorAll('#batchAdvancedProjectsList .adv-project-card');
+        for (const card of cards) {
+            const name = card.dataset.projectName;
+            const projectId = card.querySelector('.adv-project-id').value;
+            const commitHash = card.querySelector('.adv-commit-hash').value;
+            const version = card.querySelector('.adv-new-version').value.trim();
+            const btRows = card.querySelectorAll('.adv-bt-list .adv-bt-row');
+            if (btRows.length === 0) {
+                showToast(`请为项目 [${name}] 至少添加一个分支主题`, 'warning', '提示');
+                return;
+            }
+            for (const row of btRows) {
+                const branchId = row.querySelector('.adv-bt-branch').value;
+                const topicSelect = row.querySelector('.adv-bt-topic');
+                const topicId = topicSelect.value;
+                const topicOption = topicSelect.options[topicSelect.selectedIndex];
+                const topicName = topicOption ? (topicOption.dataset.topicName || topicOption.textContent) : '';
+                const rowArchs = Array.from(row.querySelectorAll('.adv-arch:checked')).map(cb => cb.value);
+                if (!branchId) {
+                    showToast(`请为项目 [${name}] 选择分支`, 'warning', '提示');
+                    return;
+                }
+                if (!topicId) {
+                    showToast(`请为项目 [${name}] 选择主题`, 'warning', '提示');
+                    return;
+                }
+                if (rowArchs.length === 0) {
+                    showToast(`请为项目 [${name}] 的分支主题至少选择一个目标架构`, 'warning', '提示');
+                    return;
+                }
+                tasks.push({
+                    name: name,
+                    project_id: parseInt(projectId),
+                    mode: 'crp_only',
+                    version: version,
+                    architectures: rowArchs,
+                    crp_topic_id: topicId,
+                    crp_topic_name: topicName,
+                    crp_branch_id: branchId ? parseInt(branchId) : undefined,
+                    start_commit_hash: commitHash || ''
+                });
+            }
         }
-        
-        projectsData.push({
-            id: projectId,
-            name: name,
-            version: newVersion,
-            commitHash: commitHash
-        });
-    });
-    
-    if (hasVersionError) {
-        showToast('请为所有项目填写版本号', 'warning', '提示');
-        return;
-    }
-    
-    // 获取架构
-    const architectures = [];
-    if (packageMode !== 'changelog_only') {
-        document.querySelectorAll('#batchArchSection .arch-checkbox input:checked').forEach(cb => {
-            architectures.push(cb.value);
-        });
-        
-        if (architectures.length === 0) {
-            showToast('请至少选择一个目标架构', 'warning', '提示');
+        if (tasks.length === 0) {
+            showToast('没有可提交的任务', 'warning', '提示');
             return;
         }
-    }
-    
-    // 获取CRP主题
-    let crpTopicId = '';
-    let crpTopicName = '';
-    if (packageMode === 'normal' || packageMode === 'crp_only') {
-        const topicSelect = document.getElementById('batchCrpTopic');
-        crpTopicId = topicSelect.value;
-        const selectedOption = topicSelect.options[topicSelect.selectedIndex];
-        crpTopicName = selectedOption ? selectedOption.dataset.topicName || selectedOption.textContent : '';
-        
-        if (!crpTopicId) {
-            showToast('请选择CRP主题', 'warning', '提示');
+    } else {
+        const modeMap = {
+            'normal': 'normal',
+            'changelog': 'changelog_only',
+            'crp': 'crp_only'
+        };
+        const packageMode = modeMap[selectedModeValue];
+
+        // 收集项目信息
+        const rows = document.querySelectorAll('#batchProjectsList tr');
+        const projectsData = [];
+        let hasVersionError = false;
+
+        rows.forEach(row => {
+            const name = row.querySelector('strong').textContent;
+            const projectId = row.querySelector('.batch-project-id').value;
+            const commitHash = row.querySelector('.batch-commit-hash').value;
+            const versionInput = row.querySelector('.batch-new-version');
+            let newVersion = versionInput.value.trim();
+
+            // 仅 CRP 打包（crp_only）不更改 changelog：用户可手动填写新版本号以升版本打包，
+            // 未填写时回退到当前版本号（保持原行为）
+            if (packageMode === 'crp_only') {
+                if (!newVersion) {
+                    const curVer = versionInput.getAttribute('data-current-version');
+                    if (curVer && curVer !== '未知') {
+                        newVersion = curVer;
+                    }
+                }
+            }
+
+            if (!newVersion) {
+                hasVersionError = true;
+            }
+
+            projectsData.push({
+                id: projectId,
+                name: name,
+                version: newVersion,
+                commitHash: commitHash
+            });
+        });
+
+        if (hasVersionError) {
+            showToast('请为所有项目填写版本号', 'warning', '提示');
             return;
         }
+
+        // 获取架构
+        const architectures = [];
+        if (packageMode !== 'changelog_only') {
+            document.querySelectorAll('#batchArchSection .arch-checkbox input:checked').forEach(cb => {
+                architectures.push(cb.value);
+            });
+
+            if (architectures.length === 0) {
+                showToast('请至少选择一个目标架构', 'warning', '提示');
+                return;
+            }
+        }
+
+        // 获取CRP主题
+        let crpTopicId = '';
+        let crpTopicName = '';
+        if (packageMode === 'normal' || packageMode === 'crp_only') {
+            const topicSelect = document.getElementById('batchCrpTopic');
+            crpTopicId = topicSelect.value;
+            const selectedOption = topicSelect.options[topicSelect.selectedIndex];
+            crpTopicName = selectedOption ? selectedOption.dataset.topicName || selectedOption.textContent : '';
+
+            if (!crpTopicId) {
+                showToast('请选择CRP主题', 'warning', '提示');
+                return;
+            }
+        }
+
+        const batchBranchId = document.getElementById('batchCrpBranchSelect').value;
+        for (const project of projectsData) {
+            tasks.push({
+                name: project.name,
+                project_id: parseInt(project.id),
+                mode: packageMode,
+                version: project.version,
+                architectures: architectures,
+                crp_topic_id: crpTopicId,
+                crp_topic_name: crpTopicName,
+                crp_branch_id: batchBranchId ? parseInt(batchBranchId) : undefined,
+                start_commit_hash: project.commitHash || ''
+            });
+        }
     }
-    
+
     const submitBtn = document.getElementById('submitBatchPackBtn');
     const originalText = submitBtn.innerHTML;
     submitBtn.disabled = true;
     submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>提交中...';
-    
+
     let successCount = 0;
     let failCount = 0;
-    
-    // 逐个创建任务
-    for (const project of projectsData) {
+
+    // 逐个创建并启动任务
+    for (const task of tasks) {
         const requestData = {
-            project_id: parseInt(project.id),
-            mode: packageMode,
-            version: project.version,
-            architectures: architectures,
-            crp_topic_id: crpTopicId,
-            crp_topic_name: crpTopicName,
-            start_commit_hash: project.commitHash || ''
+            project_id: task.project_id,
+            mode: task.mode,
+            version: task.version,
+            architectures: task.architectures,
+            crp_topic_id: task.crp_topic_id,
+            crp_topic_name: task.crp_topic_name,
+            crp_branch_id: task.crp_branch_id,
+            start_commit_hash: task.start_commit_hash
         };
-        
+
         try {
             const response = await fetch('/api/tasks/create', {
                 method: 'POST',
@@ -2531,35 +3200,35 @@ async function submitBatchPackTask() {
                 },
                 body: JSON.stringify(requestData)
             });
-            
+
             const data = await response.json();
-            
+
             if (data.success) {
                 const taskId = data.task_id;
                 const startResponse = await fetch(`/api/tasks/${taskId}/start`, {
                     method: 'POST'
                 });
                 const startData = await startResponse.json();
-                
+
                 if (startData.success) {
                     successCount++;
                 } else {
                     failCount++;
-                    console.error(`启动任务失败 [${project.name}]:`, startData.message);
+                    console.error(`启动任务失败 [${task.name}]:`, startData.message);
                 }
             } else {
                 failCount++;
-                console.error(`创建任务失败 [${project.name}]:`, data.message);
+                console.error(`创建任务失败 [${task.name}]:`, data.message);
             }
         } catch (error) {
             failCount++;
-            console.error(`提交失败 [${project.name}]:`, error);
+            console.error(`提交失败 [${task.name}]:`, error);
         }
     }
-    
+
     submitBtn.disabled = false;
     submitBtn.innerHTML = originalText;
-    
+
     if (failCount === 0) {
         showToast(`成功创建 ${successCount} 个打包任务`, 'success', '任务创建完成');
         const modal = bootstrap.Modal.getInstance(document.getElementById('batchPackModal'));

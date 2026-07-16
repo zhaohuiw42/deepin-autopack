@@ -501,6 +501,13 @@
 <script>
 const topicId = {{ topic_id }};
 
+// HTML 转义，避免成员账号破坏页面
+function escapeHtml(str) {
+    return String(str == null ? '' : str)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 // 页面加载时获取数据
 document.addEventListener('DOMContentLoaded', function() {
     loadTopicDetail();
@@ -566,12 +573,26 @@ function renderTopicHeader(topic) {
                     正在加载仓库地址...
                 </div>
             </div>
+
+            <!-- 主题成员管理区域 -->
+            <div class="repo-urls-section" id="membersSection">
+                <h5>
+                    <i class="bi bi-people-fill"></i>
+                    主题成员
+                </h5>
+                <div class="loading-repos">
+                    <span class="spinner-border spinner-border-sm me-2"></span>
+                    正在加载成员...
+                </div>
+            </div>
         </div>
     `;
     document.getElementById('topicHeader').innerHTML = headerHTML;
     
     // 加载仓库地址
     loadRepoUrls(topic.id);
+    // 加载主题成员
+    loadMembers(topic.id);
 }
 
 // 加载仓库地址
@@ -588,6 +609,7 @@ async function loadRepoUrls(topicId) {
         }
         
         const branchID = configResult.data.crp_branch_id;
+        const branchName = configResult.data.crp_branch_name || ('分支 ' + branchID);
         
         // 调用CRP API获取仓库地址
         const response = await fetch('https://crp.uniontech.com/api/topic_urls', {
@@ -658,6 +680,92 @@ async function loadRepoUrls(topicId) {
                 </button>
             </div>
         `;
+    }
+}
+
+// 加载主题成员
+async function loadMembers(topicId) {
+    const section = document.getElementById('membersSection');
+    try {
+        const response = await fetch(`/api/topics/${topicId}/members`);
+        const result = await response.json();
+        if (!result.success) {
+            section.innerHTML = `<h5><i class="bi bi-people-fill"></i> 主题成员</h5><div style="color:rgba(255,255,255,.8);font-size:.875rem;">${escapeHtml(result.message || '加载失败')}</div>`;
+            return;
+        }
+        const owners = result.data.owners || [];
+        const members = result.data.members || [];
+        const chip = (name, role) => `
+            <span class="badge rounded-pill me-2 mb-2" style="background:rgba(255,255,255,.18);color:#fff;padding:.4rem .7rem;">
+                <i class="bi bi-person${role === 'owner' ? '-fill' : ''} me-1"></i>${escapeHtml(name)}
+                <span class="badge bg-light text-dark ms-1" style="font-size:.65rem;">${role === 'owner' ? '负责人' : '成员'}</span>
+                <a href="javascript:void(0)" onclick="removeTopicMember('${escapeHtml(name)}','${role}')" title="移除" style="color:#fff;text-decoration:none;margin-left:.3rem;">&times;</a>
+            </span>`;
+        let chips = owners.map(n => chip(n, 'owner')).join('') + members.map(n => chip(n, 'member')).join('');
+        if (!chips) chips = '<span style="color:rgba(255,255,255,.7);font-size:.85rem;">暂无成员</span>';
+        section.innerHTML = `
+            <h5><i class="bi bi-people-fill"></i> 主题成员</h5>
+            <div class="mb-2">${chips}</div>
+            <div class="d-flex flex-wrap gap-2 align-items-center">
+                <input type="text" id="topicMemberInput" class="form-control form-control-sm" placeholder="输入 LDAP 账号" style="max-width:200px;">
+                <select id="topicMemberRole" class="form-select form-select-sm" style="max-width:120px;">
+                    <option value="member">成员</option>
+                    <option value="owner">负责人</option>
+                </select>
+                <button class="btn btn-sm btn-light" onclick="addTopicMember()"><i class="bi bi-plus-lg"></i> 添加</button>
+            </div>
+            <small style="color:rgba(255,255,255,.6);">输入账号后点击添加；负责人可管理主题，成员仅可查看/使用</small>
+        `;
+    } catch (error) {
+        section.innerHTML = `<h5><i class="bi bi-people-fill"></i> 主题成员</h5><div style="color:rgba(255,255,255,.8);font-size:.875rem;">加载失败: ${escapeHtml(error.message)}</div>`;
+    }
+}
+
+// 添加主题成员
+async function addTopicMember() {
+    const input = document.getElementById('topicMemberInput');
+    const roleSel = document.getElementById('topicMemberRole');
+    const acc = (input.value || '').trim();
+    if (!acc) { showToast('请输入 LDAP 账号', 'warning'); return; }
+    const role = roleSel.value;
+    const key = role === 'owner' ? 'add_owners' : 'add_members';
+    try {
+        const resp = await fetch(`/api/topics/${topicId}/members`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ [key]: [acc] })
+        });
+        const result = await resp.json();
+        if (result.success) {
+            showToast(`已添加 ${acc}`, 'success');
+            loadMembers(topicId);
+        } else {
+            showToast(`添加失败: ${result.message}`, 'error');
+        }
+    } catch (error) {
+        showToast(`添加失败: ${error.message}`, 'error');
+    }
+}
+
+// 移除主题成员
+async function removeTopicMember(name, role) {
+    if (!confirm(`确定移除 ${name}？`)) return;
+    const key = role === 'owner' ? 'remove_owners' : 'remove_members';
+    try {
+        const resp = await fetch(`/api/topics/${topicId}/members`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ [key]: [name] })
+        });
+        const result = await resp.json();
+        if (result.success) {
+            showToast(`已移除 ${name}`, 'success');
+            loadMembers(topicId);
+        } else {
+            showToast(`移除失败: ${result.message}`, 'error');
+        }
+    } catch (error) {
+        showToast(`移除失败: ${error.message}`, 'error');
     }
 }
 

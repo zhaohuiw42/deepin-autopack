@@ -219,15 +219,24 @@
                     <div class="row g-3">
                         <div class="col-md-6">
                             <label for="crp_branch_id" class="form-label">
-                                <i class="bi bi-diagram-3 me-1"></i>分支 ID
+                                <i class="bi bi-diagram-3 me-1"></i>CRP 分支
                             </label>
-                            <input type="number" 
-                                   class="form-control" 
-                                   id="crp_branch_id" 
-                                   name="crp_branch_id" 
-                                   value="{{ config.crp_branch_id or '' }}"
-                                   placeholder="例如: 123">
-                            <small class="form-text text-muted">CRP 平台的项目分支 ID</small>
+                            <select class="form-select" id="crp_branch_id" name="crp_branch_id">
+                                <option value="">-- 请选择分支 --</option>
+                                {% for bid in [47, 51, 5, 119, 123, 126, 128] %}
+                                <option value="{{ bid }}" {% if config.crp_branch_id == bid %}selected{% endif %}>
+                                    {% if bid == 47 %}eagle-1050 (ID: 47)
+                                    {% elif bid == 51 %}eagle-1043 (ID: 51)
+                                    {% elif bid == 5 %}eagle-sp1 (ID: 5)
+                                    {% elif bid == 119 %}snipe-2500 (ID: 119)
+                                    {% elif bid == 123 %}snipe-2500u1 (ID: 123)
+                                    {% elif bid == 126 %}eagle-1076 (ID: 126)
+                                    {% elif bid == 128 %}snipe-2500u2 (ID: 128)
+                                    {% endif %}
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <small class="form-text text-muted">选择 CRP 平台的项目分支</small>
                         </div>
                         <div class="col-md-6">
                             <label for="crp_topic_type" class="form-label">
@@ -241,6 +250,20 @@
                                    disabled
                                    readonly>
                             <small class="form-text text-muted">主题类型固定为 test</small>
+                        </div>
+                    </div>
+                    <div class="row mt-3">
+                        <div class="col-12">
+                            <label for="crp_topic_members" class="form-label">
+                                <i class="bi bi-people me-1"></i>主题默认成员
+                            </label>
+                            <input type="text"
+                                   class="form-control"
+                                   id="crp_topic_members"
+                                   name="crp_topic_members"
+                                   value="{{ config.crp_topic_members or '' }}"
+                                   placeholder="例如：zhangsan;lisi,wangwu">
+                            <small class="form-text text-muted">创建 CRP 主题时自动把这些账号添加为主题成员；用分号或逗号分隔多个 LDAP 用户名，留空则不自动添加</small>
                         </div>
                     </div>
                 </div>

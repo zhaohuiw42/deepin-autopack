@@ -128,16 +128,44 @@ def project_clone_repo(id):
         return jsonify({'success': False, 'message': str(e)}), 500
 
 
-@project_bp.route('/projects/<int:id>/repo-status', methods=['GET'])
+@project_bp.route('/projects/clone-all', methods=['POST'])
+def project_clone_all():
+    """一键重新克隆所有项目仓库"""
+    try:
+        projects = Project.query.all()
+        if not projects:
+            return jsonify({'success': False, 'message': '没有可克隆的项目'}), 400
+
+        # 立即将所有项目标记为克隆中，给出即时反馈
+        for project in projects:
+            project.repo_status = 'cloning'
+            project.repo_error = None
+        db.session.commit()
+
+        # 后台顺序克隆（每个仓库克隆完成后才进行下一个）
+        RepoService.clone_all_repos([p.id for p in projects])
+
+        return jsonify({
+            'success': True,
+            'message': f'已开始重新克隆 {len(projects)} 个项目仓库',
+            'data': {'project_ids': [p.id for p in projects]}
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@project_bp.route('/projects/<int:id>/status', methods=['GET'])
 def project_repo_status(id):
     """获取项目仓库状态"""
     try:
         project = Project.query.get_or_404(id)
         return jsonify({
             'success': True,
-            'status': project.repo_status,
-            'error': project.repo_error,
-            'path': project.local_repo_path
+            'data': {
+                'repo_status': project.repo_status,
+                'repo_error': project.repo_error,
+                'path': project.local_repo_path
+            }
         })
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500

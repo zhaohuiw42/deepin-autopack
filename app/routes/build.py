@@ -8,6 +8,7 @@ from app.services.build_task_service import BuildTaskService
 from app.models.build_task import BuildTask
 from app.services.github_service import GitHubService
 from app.services.workflow_service import WorkflowService
+from app.services.crp_service import CRPService
 from app.models import GlobalConfig
 from app.models.project import Project
 import logging
@@ -40,6 +41,12 @@ def api_get_tasks():
         
         # 格式化任务数据以匹配前端需求
         formatted_tasks = []
+        # 用于解析 CRP 分支名称的全局默认分支ID（任务未指定时回退）
+        default_crp_branch_id = None
+        config = GlobalConfig.query.first()
+        if config and config.crp_branch_id:
+            default_crp_branch_id = config.crp_branch_id
+
         for task in tasks:
             # 格式化步骤数据
             steps = []
@@ -51,7 +58,11 @@ def api_get_tasks():
                     'log_message': step['log_message'],
                     'error_message': step.get('error_message')
                 })
-            
+
+            # 打包分支为用户选择的 CRP 分支（任务级优先，回退全局配置）
+            crp_branch_id = task.get('crp_branch_id') or default_crp_branch_id
+            crp_branch_name = CRPService.get_branch_name(crp_branch_id) if crp_branch_id else None
+
             formatted_task = {
                 'id': task['id'],
                 'project_name': task['project_name'],
@@ -68,6 +79,13 @@ def api_get_tasks():
                 'github_pr_url': task['github_pr_url'],
                 'github_pr_number': task['github_pr_number'],
                 'crp_build_url': task['crp_build_url'],
+                'crp_build_id': task.get('crp_build_id'),
+                'crp_build_status': task.get('crp_build_status'),
+                'crp_topic_id': task.get('crp_topic_id'),
+                'crp_topic_name': task.get('crp_topic_name'),
+                'crp_branch_id': crp_branch_id,
+                'crp_branch_name': crp_branch_name,
+                'crp_commit_hash': task.get('crp_commit_hash'),
                 'error': task['error_message']
             }
             formatted_tasks.append(formatted_task)
@@ -83,6 +101,44 @@ def api_get_tasks():
             'success': False,
             'message': f'获取任务列表失败: {str(e)}'
         }), 500
+
+# ==================== 任务仓库地址API ====================
+
+@build_bp.route('/api/tasks/<int:task_id>/repo-url', methods=['GET'])
+def api_get_task_repo_url(task_id):
+    """获取打包任务在 CRP 上构建产物对应的子仓库（apt 源）地址"""
+    try:
+        task = BuildTask.query.get_or_404(task_id)
+
+        topic_id = task.crp_topic_id
+        branch_id = task.crp_branch_id
+        if not branch_id:
+            config = GlobalConfig.query.first()
+            branch_id = config.crp_branch_id if config else None
+
+        if not topic_id or not branch_id:
+            return jsonify({
+                'success': False,
+                'message': '缺少CRP主题或分支信息，无法获取仓库地址'
+            }), 400
+
+        repo_urls = CRPService.get_topic_repo_urls(int(branch_id), int(topic_id))
+
+        return jsonify({
+            'success': True,
+            'data': {
+                'repo_urls': repo_urls,
+                'crp_branch_name': CRPService.get_branch_name(branch_id),
+                'crp_build_url': task.crp_build_url
+            }
+        })
+    except Exception as e:
+        logger.exception(f"获取任务仓库地址失败: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'获取仓库地址失败: {str(e)}'
+        }), 500
+
 
 # ==================== 新增任务控制API ====================
 
@@ -110,6 +166,7 @@ def api_create_task():
                 'architectures': data.get('architectures', []),
                 'crp_topic_id': data.get('crp_topic_id'),
                 'crp_topic_name': data.get('crp_topic_name'),
+                'crp_branch_id': data.get('crp_branch_id'),
                 'start_commit_hash': data.get('start_commit_hash', ''),
                 'github_action_name': data.get('github_action_name'),
                 'github_action_params': data.get('github_action_params'),
@@ -458,6 +515,78 @@ def api_get_workflows(project_name):
             'success': False,
             'message': f'获取 workflows 失败: {str(e)}'
         }), 500
+
+
+# ==================== Shuttle 打包进度 ====================
+
+@build_bp.route('/api/tasks/<int:task_id>/shuttle-status', methods=['GET'])
+def api_task_shuttle_status(task_id):
+    """获取打包任务对应的 Shuttle 构建进度信息
+
+    通过 CRP 主题下的 release 查找本任务对应的包，返回 Shuttle 任务 ID（BuildID）
+    与 CRP 构建状态；前端据此调用 Shuttle 获取各架构 job 进度并跳转。
+    """
+    try:
+        task = BuildTask.query.get_or_404(task_id)
+        if not task.crp_topic_id:
+            return jsonify({'success': False, 'message': '该任务未关联 CRP 主题'}), 400
+
+        token = CRPService.get_token()
+        if not token:
+            return jsonify({'success': False, 'message': 'CRP 登录失败，请检查 LDAP 账号密码'}), 401
+
+        releases = CRPService.list_topic_releases(token, int(task.crp_topic_id))
+        release_id = 0
+        try:
+            release_id = int(task.crp_build_id) if task.crp_build_id else 0
+        except (TypeError, ValueError):
+            release_id = 0
+
+        release = None
+        if release_id:
+            release = next((r for r in releases if r.get('id') == release_id), None)
+        if not release and (task.crp_commit_hash or ''):
+            commit = task.crp_commit_hash
+            release = next((r for r in releases if (r.get('commit') or '') == commit), None)
+        if not release:
+            crp_project_name = None
+            # 注意：build.py 顶部导入的 app.models.project.Project 使用的是未被
+            # init_app 的独立 db 实例，无法查询；这里改用 app.models.Project（与
+            # app.db 绑定，真正可用）来取 CRP 项目名做兜底匹配。
+            from app.models import Project as _AppProject
+            proj = _AppProject.query.get(task.project_id)
+            if proj:
+                crp_project_name = proj.crp_project_name or f"{proj.name}-v25"
+            if crp_project_name:
+                release = next((r for r in releases if r.get('project_name') == crp_project_name), None)
+
+        if not release:
+            return jsonify({
+                'success': True,
+                'data': {'found': False, 'build_state': 'UNKNOWN',
+                         'build_state_label': '未知', 'jobs': [],
+                         'shuttle_task_id': 0}
+            })
+
+        build_state = release.get('build_state', 'UNKNOWN')
+        state_info = CRPService.get_build_state_info(build_state)
+        shuttle_task_id = release.get('build_id') or 0
+
+        return jsonify({
+            'success': True,
+            'data': {
+                'found': True,
+                'release_id': release.get('id'),
+                'shuttle_task_id': shuttle_task_id,
+                'build_state': build_state,
+                'build_state_label': state_info['label'],
+                'crp_build_url': task.crp_build_url,
+                'crp_build_status': task.crp_build_status,
+            }
+        })
+    except Exception as e:
+        logger.exception(f"获取 shuttle 打包进度失败: {e}")
+        return jsonify({'success': False, 'message': f'获取打包进度失败: {str(e)}'}), 500
 
 
 # ==================== Shuttle 构建日志 ====================

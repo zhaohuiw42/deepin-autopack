@@ -7,9 +7,18 @@
     <h2 class="mb-0">
         <i class="bi bi-folder2-open text-primary me-2"></i>项目列表
     </h2>
-    <a href="{{ url_for('project.project_create') }}" class="btn btn-primary">
-        <i class="bi bi-plus-circle me-1"></i>新建项目
-    </a>
+    <div class="d-flex gap-2">
+        {% if project_data %}
+        <button id="clone-all-btn" class="btn btn-warning-modern"
+                onclick="cloneAllRepos()"
+                title="删除并重新克隆所有项目的仓库（后台顺序执行）">
+            <i class="bi bi-arrow-repeat me-1"></i>一键重新克隆所有仓库
+        </button>
+        {% endif %}
+        <a href="{{ url_for('project.project_create') }}" class="btn btn-primary">
+            <i class="bi bi-plus-circle me-1"></i>新建项目
+        </a>
+    </div>
 </div>
 
 {% if project_data %}
@@ -460,6 +469,86 @@ function pollRepoStatus(projectId) {
                     clearInterval(interval);
                     alert('克隆失败: ' + data.data.repo_error);
                 }
+            }
+        });
+    }, 2000);
+}
+
+function cloneAllRepos() {
+    if (!confirm('确定要重新克隆所有项目的仓库吗？\n\n所有现有仓库将被删除并重新克隆，克隆过程在后台顺序执行，可能需要一些时间。')) {
+        return;
+    }
+
+    const btn = document.getElementById('clone-all-btn');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>克隆中...';
+    }
+
+    fetch(`/projects/clone-all`, {
+        method: 'POST'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (!data.success) {
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>一键重新克隆所有仓库';
+            }
+            alert('克隆失败: ' + data.message);
+            return;
+        }
+
+        const projectIds = (data.data && data.data.project_ids) ? data.data.project_ids : [];
+        // 立即把所有状态徽标置为克隆中
+        projectIds.forEach(id => {
+            const span = document.querySelector(`#repo-status-${id}`);
+            if (span) {
+                span.innerHTML = '<span class="status-badge status-building"><span class="spinner-border spinner-border-sm me-1"></span> 克隆中</span>';
+            }
+        });
+
+        pollAllRepoStatus(projectIds);
+    })
+    .catch(err => {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>一键重新克隆所有仓库';
+        }
+        alert('请求失败: ' + err);
+    });
+}
+
+function pollAllRepoStatus(projectIds) {
+    if (!projectIds.length) {
+        location.reload();
+        return;
+    }
+
+    const interval = setInterval(() => {
+        const checks = projectIds.map(id => {
+            return fetch(`/projects/${id}/status`)
+                .then(response => response.json())
+                .then(data => {
+                    if (!data.success) return null;
+                    const status = data.data.repo_status;
+                    const span = document.querySelector(`#repo-status-${id}`);
+                    if (status === 'ready') {
+                        if (span) span.innerHTML = '<span class="status-badge status-success"><i class="bi bi-check-circle-fill"></i> 就绪</span>';
+                    } else if (status === 'error') {
+                        if (span) span.innerHTML = '<span class="status-badge status-failed"><i class="bi bi-x-circle-fill"></i> 错误</span>';
+                    }
+                    return status;
+                })
+                .catch(() => null);
+        });
+
+        Promise.all(checks).then(results => {
+            // 仍在克隆中（含瞬时请求失败）则继续轮询，仅 ready/error 视为结束
+            const stillCloning = results.some(s => s !== 'ready' && s !== 'error');
+            if (!stillCloning) {
+                clearInterval(interval);
+                setTimeout(() => location.reload(), 500);
             }
         });
     }, 2000);
